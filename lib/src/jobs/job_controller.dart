@@ -18,6 +18,9 @@ import 'job_repository.dart';
 import 'output_file_allocator.dart';
 import 'translation_job.dart';
 
+typedef TranslationEngineFactory =
+    TranslationEngine Function(ModelSettings modelSettings);
+
 final class JobController extends ChangeNotifier {
   JobController({
     required this.paths,
@@ -26,7 +29,11 @@ final class JobController extends ChangeNotifier {
     required this.desktopServices,
     this.maximumConcurrentJobs = 2,
     this.outputFileAllocator = const OutputFileAllocator(),
-  });
+    EbookCodec? codec,
+    TranslationEngineFactory? translationEngineFactory,
+  }) : _codec = codec ?? const EpubCodec(),
+       _translationEngineFactory =
+           translationEngineFactory ?? createHttpTranslationEngine;
 
   final AppPaths paths;
   final SettingsRepository settingsRepository;
@@ -34,7 +41,8 @@ final class JobController extends ChangeNotifier {
   final DesktopServices desktopServices;
   final int maximumConcurrentJobs;
   final OutputFileAllocator outputFileAllocator;
-  final EbookCodec _codec = const EpubCodec();
+  final EbookCodec _codec;
+  final TranslationEngineFactory _translationEngineFactory;
   final Set<String> _runningJobIds = {};
   final Set<String> _abandonRequested = {};
   final Map<String, TranslationCancellationToken> _cancellationTokens = {};
@@ -62,7 +70,29 @@ final class JobController extends ChangeNotifier {
           else
             job,
       ];
+      for (var index = 0; index < jobs.length; index++) {
+        final job = jobs[index];
+        if (job.status == TranslationJobStatus.completed ||
+            job.outputPath == null) {
+          continue;
+        }
+        try {
+          jobs[index] = await _cleanInterruptedOutput(job);
+        } on Object catch (error) {
+          debugPrint('Unable to clean interrupted output: $error');
+        }
+      }
       await jobRepository.save(jobs);
+      for (final job in jobs) {
+        if (job.status == TranslationJobStatus.completed ||
+            job.status == TranslationJobStatus.abandoned) {
+          try {
+            await _deleteWorkspace(job.id);
+          } on Object catch (error) {
+            debugPrint('Unable to clean terminal workspace: $error');
+          }
+        }
+      }
     } on Object catch (error) {
       initializationError = error.toString();
     } finally {
@@ -159,6 +189,14 @@ final class JobController extends ChangeNotifier {
       ),
     );
     if (!_runningJobIds.contains(jobId)) {
+      final abandoned = jobById(jobId);
+      if (abandoned?.outputPath != null) {
+        try {
+          await _replace(await _cleanInterruptedOutput(abandoned!));
+        } on Object catch (error) {
+          debugPrint('Unable to clean abandoned output: $error');
+        }
+      }
       await _deleteWorkspace(jobId);
       _abandonRequested.remove(jobId);
     }
@@ -199,13 +237,34 @@ final class JobController extends ChangeNotifier {
       if (job == null || _abandonRequested.contains(jobId)) {
         return;
       }
-      await _replace(job.copyWith(status: TranslationJobStatus.unpacking));
+      if (!await _replace(
+        job.copyWith(status: TranslationJobStatus.unpacking),
+      )) {
+        return;
+      }
+      job = jobById(jobId);
+      if (job == null || await _stopIfAbandoned(jobId)) {
+        return;
+      }
       final workspace = paths.workspaceFor(jobId);
       final manifest = File(path.join(workspace.path, 'epub-workspace.json'));
       final EbookSession session;
       if (await manifest.exists()) {
         session = await _codec.restore(workspace);
       } else {
+        if (job.totalUnits != 0 ||
+            job.completedUnitIds.isNotEmpty ||
+            job.failedUnitIds.isNotEmpty) {
+          job = job.copyWith(
+            totalUnits: 0,
+            completedUnitIds: const {},
+            failedUnitIds: const {},
+            clearError: true,
+          );
+          if (!await _replace(job)) {
+            return;
+          }
+        }
         final sourceAccess = await _startRequiredAccess(
           job.sourceBookmark,
           'Source access could not be restored. Add this book again.',
@@ -218,7 +277,9 @@ final class JobController extends ChangeNotifier {
               sourcePath: sourceAccess.resolvedPath,
               sourceBookmark: refreshed ?? job.sourceBookmark,
             );
-            await _replace(job);
+            if (!await _replace(job)) {
+              return;
+            }
           }
           session = await _codec.unpack(
             File(sourceAccess.resolvedPath),
@@ -233,18 +294,54 @@ final class JobController extends ChangeNotifier {
       if (job == null || await _stopIfAbandoned(jobId)) {
         return;
       }
+      final recordedUnitIds = await session.recordedTranslationUnitIds();
+      job = jobById(jobId);
+      if (job == null || await _stopIfAbandoned(jobId)) {
+        return;
+      }
+      if (job.completedUnitIds.difference(recordedUnitIds).isNotEmpty) {
+        job = job.copyWith(
+          completedUnitIds: const {},
+          failedUnitIds: const {},
+          clearError: true,
+        );
+        if (!await _replace(job)) {
+          return;
+        }
+      }
       if (job.totalUnits == 0) {
         var count = 0;
         await for (final _ in session.readTranslationUnits()) {
+          if (await _stopIfAbandoned(jobId)) {
+            return;
+          }
           count++;
         }
+        job = jobById(jobId);
+        if (job == null || await _stopIfAbandoned(jobId)) {
+          return;
+        }
         job = job.copyWith(totalUnits: count);
-        await _replace(job);
+        if (!await _replace(job)) {
+          return;
+        }
       }
 
-      await _replace(job.copyWith(status: TranslationJobStatus.translating));
+      job = jobById(jobId);
+      if (job == null || await _stopIfAbandoned(jobId)) {
+        return;
+      }
+      if (!await _replace(
+        job.copyWith(status: TranslationJobStatus.translating),
+      )) {
+        return;
+      }
+      job = jobById(jobId);
+      if (job == null || await _stopIfAbandoned(jobId)) {
+        return;
+      }
       final modelSettings = settings.model(job.provider);
-      final engine = _createEngine(modelSettings);
+      final engine = _translationEngineFactory(modelSettings);
       try {
         await for (final unit in session.readTranslationUnits()) {
           job = jobById(jobId);
@@ -297,12 +394,18 @@ final class JobController extends ChangeNotifier {
             throw StateError('The engine omitted translation unit ${unit.id}.');
           }
           await session.saveTranslation(unit, translated);
+          job = jobById(jobId);
+          if (job == null || await _stopIfAbandoned(jobId)) {
+            return;
+          }
           job = job.copyWith(
             completedUnitIds: {...job.completedUnitIds, unit.id},
             failedUnitIds: {...job.failedUnitIds}..remove(unit.id),
             clearError: true,
           );
-          await _replace(job);
+          if (!await _replace(job)) {
+            return;
+          }
         }
       } finally {
         engine.close();
@@ -312,12 +415,22 @@ final class JobController extends ChangeNotifier {
       if (job == null || await _stopIfAbandoned(jobId)) {
         return;
       }
-      await _replace(job.copyWith(status: TranslationJobStatus.repacking));
+      if (!await _replace(
+        job.copyWith(status: TranslationJobStatus.repacking),
+      )) {
+        return;
+      }
+      job = jobById(jobId);
+      if (job == null || await _stopIfAbandoned(jobId)) {
+        return;
+      }
       final outputAccess = await _startRequiredAccess(
         job.outputDirectoryBookmark,
         'Output folder access could not be restored. Add this book again.',
       );
       late final File output;
+      var outputPublished = false;
+      OutputFileReservation? reservation;
       try {
         final refreshed = outputAccess.refreshedBookmark;
         if (outputAccess.resolvedPath != job.outputDirectory ||
@@ -326,43 +439,95 @@ final class JobController extends ChangeNotifier {
             outputDirectory: outputAccess.resolvedPath,
             outputDirectoryBookmark: refreshed ?? job.outputDirectoryBookmark,
           );
-          await _replace(job);
+          if (!await _replace(job)) {
+            return;
+          }
         }
-        output = await outputFileAllocator.reserve(
+        if (job.outputPath != null) {
+          final interruptedOutputPath = path.join(
+            outputAccess.resolvedPath,
+            path.basename(job.outputPath!),
+          );
+          await outputFileAllocator.cleanInterruptedReservation(
+            outputPath: interruptedOutputPath,
+            jobId: jobId,
+          );
+          job = job.copyWith(clearOutputPath: true);
+          if (!await _replace(job)) {
+            return;
+          }
+        }
+        job = jobById(jobId);
+        if (job == null || await _stopIfAbandoned(jobId)) {
+          return;
+        }
+        reservation = await outputFileAllocator.reserve(
           directory: Directory(outputAccess.resolvedPath),
           sourcePath: job.sourcePath,
           targetLanguage: job.targetLanguage,
+          jobId: jobId,
         );
+        job = job.copyWith(outputPath: reservation.output.path);
+        if (!await _replace(job)) {
+          await reservation.cancel();
+          return;
+        }
         if (await _stopIfAbandoned(jobId)) {
-          await output.delete();
+          await reservation.cancel();
           return;
         }
         try {
-          await session.repack(output);
+          await session.repack(reservation.staging);
         } on Object {
-          if (await output.exists()) {
-            await output.delete();
-          }
+          await reservation.cancel();
           rethrow;
         }
+        if (await _stopIfAbandoned(jobId)) {
+          await reservation.cancel();
+          return;
+        }
+        output = await reservation.publish();
+        outputPublished = true;
+        reservation = null;
         if (await _stopIfAbandoned(jobId)) {
           await output.delete();
           return;
         }
+        job = jobById(jobId);
+        if (job == null) {
+          await output.delete();
+          return;
+        }
+        final completed = await _replace(
+          job.copyWith(
+            status: TranslationJobStatus.completed,
+            outputPath: output.path,
+            failedUnitIds: const {},
+            clearError: true,
+          ),
+        );
+        if (!completed) {
+          await output.delete();
+          await _stopIfAbandoned(jobId);
+          return;
+        }
+      } on Object {
+        await reservation?.cancel();
+        if (outputPublished && await output.exists()) {
+          await output.delete();
+        }
+        rethrow;
       } finally {
         await outputAccess.close();
       }
-      await _replace(
-        job.copyWith(
-          status: TranslationJobStatus.completed,
-          outputPath: output.path,
-          failedUnitIds: const {},
-          clearError: true,
-        ),
-      );
+      try {
+        await _deleteWorkspace(jobId);
+      } on Object catch (error) {
+        debugPrint('Unable to clean completed workspace: $error');
+      }
       try {
         await desktopServices.notifyCompleted(
-          jobId: job.id,
+          jobId: jobId,
           outputPath: output.path,
         );
       } on Object catch (error) {
@@ -380,25 +545,8 @@ final class JobController extends ChangeNotifier {
       }
     } finally {
       _cancellationTokens.remove(jobId);
-      if (_abandonRequested.contains(jobId)) {
-        await _stopIfAbandoned(jobId);
-      }
+      await _stopIfAbandoned(jobId);
     }
-  }
-
-  TranslationEngine _createEngine(ModelSettings modelSettings) {
-    return switch (modelSettings.provider) {
-      TranslationProvider.deepseek => DeepSeekTranslationEngine(
-        baseUrl: modelSettings.baseUrl,
-        apiKey: modelSettings.apiKey,
-        model: modelSettings.model,
-      ),
-      TranslationProvider.codex => CodexTranslationEngine(
-        baseUrl: modelSettings.baseUrl,
-        apiKey: modelSettings.apiKey,
-        model: modelSettings.model,
-      ),
-    };
   }
 
   Future<SecurityScopedAccess> _startRequiredAccess(
@@ -411,29 +559,74 @@ final class JobController extends ChangeNotifier {
     return desktopServices.startAccess(bookmark);
   }
 
+  Future<TranslationJob> _cleanInterruptedOutput(TranslationJob job) async {
+    final outputPath = job.outputPath;
+    if (outputPath == null) {
+      return job;
+    }
+    final access = await _startRequiredAccess(
+      job.outputDirectoryBookmark,
+      'Output folder access could not be restored. Choose it again.',
+    );
+    try {
+      final resolvedOutputPath = path.join(
+        access.resolvedPath,
+        path.basename(outputPath),
+      );
+      await outputFileAllocator.cleanInterruptedReservation(
+        outputPath: resolvedOutputPath,
+        jobId: job.id,
+      );
+      return job.copyWith(
+        outputDirectory: access.resolvedPath,
+        outputDirectoryBookmark:
+            access.refreshedBookmark ?? job.outputDirectoryBookmark,
+        clearOutputPath: true,
+      );
+    } finally {
+      await access.close();
+    }
+  }
+
   Future<bool> _stopIfAbandoned(String jobId) async {
-    if (!_abandonRequested.contains(jobId)) {
+    if (!_abandonRequested.contains(jobId) &&
+        jobById(jobId)?.status != TranslationJobStatus.abandoned) {
       return false;
     }
-    await _deleteWorkspace(jobId);
-    _abandonRequested.remove(jobId);
+    try {
+      await _deleteWorkspace(jobId);
+    } on Object catch (error) {
+      debugPrint('Unable to clean abandoned workspace: $error');
+    } finally {
+      _abandonRequested.remove(jobId);
+    }
     return true;
   }
 
   Future<void> _deleteWorkspace(String jobId) async {
-    final workspace = paths.workspaceFor(jobId);
-    if (await workspace.exists()) {
-      await workspace.delete(recursive: true);
+    for (final workspace in [
+      paths.workspaceFor(jobId),
+      paths.legacyWorkspaceFor(jobId),
+    ]) {
+      if (await workspace.exists()) {
+        await workspace.delete(recursive: true);
+      }
     }
   }
 
-  Future<void> _replace(TranslationJob updated) async {
+  Future<bool> _replace(TranslationJob updated) async {
     final index = jobs.indexWhere((job) => job.id == updated.id);
     if (index < 0) {
-      return;
+      return false;
+    }
+    final current = jobs[index];
+    if (current.status == TranslationJobStatus.abandoned &&
+        updated.status != TranslationJobStatus.abandoned) {
+      return false;
     }
     jobs[index] = updated;
     await _persist();
+    return true;
   }
 
   Future<void> _persist() async {
@@ -444,4 +637,19 @@ final class JobController extends ChangeNotifier {
 
 extension<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
+}
+
+TranslationEngine createHttpTranslationEngine(ModelSettings modelSettings) {
+  return switch (modelSettings.provider) {
+    TranslationProvider.deepseek => DeepSeekTranslationEngine(
+      baseUrl: modelSettings.baseUrl,
+      apiKey: modelSettings.apiKey,
+      model: modelSettings.model,
+    ),
+    TranslationProvider.codex => CodexTranslationEngine(
+      baseUrl: modelSettings.baseUrl,
+      apiKey: modelSettings.apiKey,
+      model: modelSettings.model,
+    ),
+  };
 }

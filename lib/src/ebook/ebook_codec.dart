@@ -19,6 +19,8 @@ abstract interface class EbookSession {
 
   Stream<TranslationUnit> readTranslationUnits();
 
+  Future<Set<String>> recordedTranslationUnitIds();
+
   Future<void> saveTranslation(
     TranslationUnit source,
     TranslatedUnit translation,

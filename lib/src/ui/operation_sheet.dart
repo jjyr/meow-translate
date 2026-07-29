@@ -16,6 +16,9 @@ final class OperationOptions {
   final TranslationProvider provider;
 }
 
+String rememberedOutputDirectory(AppSettings settings) =>
+    settings.outputDirectoryBookmark.isEmpty ? '' : settings.outputDirectory;
+
 Future<OperationOptions?> showOperationSheet({
   required BuildContext context,
   required int fileCount,
@@ -46,6 +49,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
   late final TextEditingController _outputController;
   late String _targetLanguage;
   late TranslationProvider _provider;
+  late bool _requiresOutputReselection;
 
   static const _languages = [
     'Simplified Chinese',
@@ -62,8 +66,11 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
   void initState() {
     super.initState();
     _outputController = TextEditingController(
-      text: widget.settings.outputDirectory,
+      text: rememberedOutputDirectory(widget.settings),
     );
+    _requiresOutputReselection =
+        widget.settings.outputDirectory.isNotEmpty &&
+        widget.settings.outputDirectoryBookmark.isEmpty;
     _targetLanguage = widget.settings.targetLanguage;
     _provider = widget.settings.lastProvider;
   }
@@ -117,7 +124,10 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
                             : _outputController.text,
                       );
                       if (selected != null && mounted) {
-                        setState(() => _outputController.text = selected);
+                        setState(() {
+                          _outputController.text = selected;
+                          _requiresOutputReselection = false;
+                        });
                       }
                     },
                     child: const Text('Choose…'),
@@ -125,6 +135,18 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
                 ],
               ),
             ),
+            if (_requiresOutputReselection) ...[
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.only(left: 130),
+                child: Text(
+                  'Choose the output folder again to restore macOS access.',
+                  style: MacosTheme.of(context).typography.caption1.copyWith(
+                    color: MacosColors.systemOrangeColor,
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 14),
             _LabeledControl(
               label: 'Target language',

@@ -26,8 +26,11 @@ final class AppPaths {
   File get jobsFile => File(path.join(supportDirectory.path, 'jobs.json'));
 
   Directory get workspacesDirectory =>
-      Directory(path.join(cacheDirectory.path, 'workspaces'));
+      Directory(path.join(supportDirectory.path, 'workspaces'));
 
   Directory workspaceFor(String jobId) =>
       Directory(path.join(workspacesDirectory.path, jobId));
+
+  Directory legacyWorkspaceFor(String jobId) =>
+      Directory(path.join(cacheDirectory.path, 'workspaces', jobId));
 }

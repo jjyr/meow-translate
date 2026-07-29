@@ -91,6 +91,7 @@ void main() {
       paragraph,
       TranslatedUnit(unitId: paragraph.id, fragments: translatedFragments),
     );
+    expect(await session.recordedTranslationUnitIds(), {paragraph.id});
 
     final output = File('${temporaryDirectory.path}/translated.epub');
     await session.repack(output);

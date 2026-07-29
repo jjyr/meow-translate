@@ -332,6 +332,31 @@ final class EpubSession implements EbookSession {
   }
 
   @override
+  Future<Set<String>> recordedTranslationUnitIds() async {
+    if (!await _translationLog.exists()) {
+      return {};
+    }
+    final unitIds = <String>{};
+    await for (final line
+        in _translationLog
+            .openRead()
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+      if (line.trim().isEmpty) {
+        continue;
+      }
+      final decoded = jsonDecode(line);
+      if (decoded is! Map<String, dynamic> || decoded['unit_id'] is! String) {
+        throw const EbookCodecException(
+          'The translation transcript is invalid.',
+        );
+      }
+      unitIds.add(decoded['unit_id'] as String);
+    }
+    return unitIds;
+  }
+
+  @override
   Future<void> saveTranslation(
     TranslationUnit source,
     TranslatedUnit translation,

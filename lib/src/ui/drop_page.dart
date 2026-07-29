@@ -181,12 +181,23 @@ final class _DropPageState extends State<DropPage> {
     if (options == null) {
       return;
     }
-    await widget.controller.enqueue(
-      sourcePaths: epubPaths,
-      outputDirectory: options.outputDirectory,
-      targetLanguage: options.targetLanguage,
-      provider: options.provider,
-    );
+    try {
+      await widget.controller.enqueue(
+        sourcePaths: epubPaths,
+        outputDirectory: options.outputDirectory,
+        targetLanguage: options.targetLanguage,
+        provider: options.provider,
+      );
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _validationMessage =
+              'Unable to access the selected files. Choose them again. '
+              '$error';
+        });
+      }
+      return;
+    }
     widget.onShowJobs();
   }
 }

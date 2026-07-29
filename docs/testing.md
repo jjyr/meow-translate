@@ -26,7 +26,9 @@ The generated EPUB fixture covers:
 The deterministic suite also covers credential-free job serialization,
 legacy job migration, serialized concurrent history writes, private history
 permissions, atomic output filename reservation, stalled-request
-cancellation, and SSE idle timeouts.
+cancellation, SSE idle timeouts, missing-workspace progress reset, monotonic
+cancel state, interrupted-output recovery, terminal workspace cleanup, and
+legacy output-folder migration.
 
 ## Real-book suite
 

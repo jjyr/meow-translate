@@ -100,6 +100,7 @@ final class TranslationJob {
     String? outputPath,
     String? errorMessage,
     bool clearError = false,
+    bool clearOutputPath = false,
   }) => TranslationJob(
     id: id,
     sourcePath: sourcePath ?? this.sourcePath,
@@ -114,7 +115,7 @@ final class TranslationJob {
     totalUnits: totalUnits ?? this.totalUnits,
     completedUnitIds: completedUnitIds ?? this.completedUnitIds,
     failedUnitIds: failedUnitIds ?? this.failedUnitIds,
-    outputPath: outputPath ?? this.outputPath,
+    outputPath: clearOutputPath ? null : (outputPath ?? this.outputPath),
     errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
   );
 

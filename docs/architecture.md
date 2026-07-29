@@ -66,6 +66,7 @@ untouched entry remains byte-identical.
 abstract interface class TranslationEngine {
   String get id;
   Stream<TranslationEvent> translate(TranslationRequest request);
+  void close();
 }
 ```
 
@@ -100,23 +101,42 @@ Retrying reopens the existing workspace, skips completed units, and uses the
 current configuration for the same provider. Abandoning removes the temporary
 workspace after in-flight work stops.
 
+Active workspaces live in Application Support rather than the purgeable cache.
+If a workspace is nevertheless missing or damaged, Meow clears all persisted
+unit progress before translating again. On every restore it verifies that each
+persisted completion identifier is present in the translation transcript; it
+never trusts job progress without its overlay record. Completed and abandoned
+workspaces are deleted, including legacy cache locations.
+
+`abandoned` is a monotonic terminal state. Repository updates reject stale
+worker snapshots that attempt to replace it, and the controller reloads the
+current job after asynchronous translation and repacking operations.
+
 The source file and output directory are stored as macOS security-scoped
 bookmarks. Meow resolves and starts access only while unpacking or repacking,
 then releases it. This lets a queued or retried job recover sandbox access
 after relaunch. Legacy jobs without bookmarks ask the user to add the book
 again.
 
-Output names are reserved with an exclusive file creation before repacking.
-Concurrent books with the same basename therefore receive different numbered
-paths instead of racing on an existence check.
+Output names are reserved with an exclusive hidden lock. Repacking writes to a
+hidden staging file on the same filesystem as the destination, while the final
+`.epub` path remains absent. A complete ZIP is atomically renamed into place.
+The reservation path is persisted so startup can remove interrupted staging,
+locks, or unpublished output before retrying. Concurrent books with the same
+basename receive different numbered paths.
+
+Remembered output paths are usable only with a matching security-scoped
+bookmark. A legacy configuration without one leaves the field empty and asks
+the user to choose the folder again.
 
 ## Storage
 
 - `config.json`: last-used options and provider configuration.
 - `jobs.json`: provider, security-scoped bookmarks, persistent job history,
   and unit states. It never contains API keys or model configuration.
-- `workspaces/<job-id>`: source copy, unpacked entries, manifest, transcript,
-  patched XHTML, and output staging.
+- `workspaces/<job-id>`: persistent in-progress source copy, unpacked entries,
+  manifest, transcript, and patched XHTML. Removed at terminal completion or
+  abandonment.
 
 Configuration and job files are written atomically with mode `0600` on macOS
 and Linux. Job writes are serialized from immutable snapshots so concurrent

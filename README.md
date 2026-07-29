@@ -74,14 +74,17 @@ provider and resolves the current model configuration when it runs.
 Translation transcripts contain unit identifiers, source text, and translated
 text.
 
-Temporary EPUB workspaces live below the application cache directory:
+In-progress EPUB workspaces live below the Application Support directory so
+macOS cannot purge resumable translations:
 
 ```text
 workspaces/<job-id>/
 ```
 
 Each job uses a separate directory so concurrent jobs cannot overwrite one
-another.
+another. Meow removes the workspace when the job completes or is abandoned.
+Final EPUBs are first built in a hidden destination-local staging file and
+then atomically published.
 
 See [Architecture](docs/architecture.md) and [Testing](docs/testing.md) for
 implementation details.
