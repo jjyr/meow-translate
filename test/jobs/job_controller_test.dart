@@ -58,8 +58,10 @@ void main() {
   tearDown(() async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(desktopChannel, null);
-    if (await temporaryDirectory.exists()) {
+    try {
       await temporaryDirectory.delete(recursive: true);
+    } on PathNotFoundException {
+      // A controller cleanup may remove the last workspace concurrently.
     }
   });
 
