@@ -361,23 +361,16 @@ final class EpubSession implements EbookSession {
         'The translated unit does not match its source unit.',
       );
     }
-    final expectedIds = source.fragments.map((fragment) => fragment.id).toSet();
-    if (expectedIds.length != translation.fragments.length ||
-        expectedIds.difference(translation.fragments.keys.toSet()).isNotEmpty) {
-      throw const EbookCodecException(
-        'The translation does not contain all source fragments.',
-      );
+    if (translation.text.trim().isEmpty) {
+      throw const EbookCodecException('The translated unit is empty.');
     }
 
     await _translationLog.parent.create(recursive: true);
     final record = {
       'unit_id': source.id,
       'resource_path': source.resourcePath,
-      'source': {
-        for (final fragment in source.fragments)
-          fragment.id: fragment.sourceText,
-      },
-      'translation': translation.fragments,
+      'source': source.sourceText,
+      'translation': translation.text,
     };
     await _translationLog.writeAsString(
       '${jsonEncode(record)}\n',
@@ -521,14 +514,24 @@ final class EpubSession implements EbookSession {
     final decoded = jsonDecode(line);
     if (decoded is! Map<String, dynamic> ||
         decoded['unit_id'] is! String ||
-        decoded['resource_path'] is! String ||
-        decoded['translation'] is! Map<String, dynamic>) {
+        decoded['resource_path'] is! String) {
+      throw const EbookCodecException('The translation transcript is invalid.');
+    }
+    final translation = decoded['translation'];
+    if (translation is String) {
+      return _StoredTranslation(
+        unitId: decoded['unit_id'] as String,
+        resourcePath: decoded['resource_path'] as String,
+        text: translation,
+      );
+    }
+    if (translation is! Map<String, dynamic>) {
       throw const EbookCodecException('The translation transcript is invalid.');
     }
     return _StoredTranslation(
       unitId: decoded['unit_id'] as String,
       resourcePath: decoded['resource_path'] as String,
-      fragments: (decoded['translation'] as Map<String, dynamic>).map(
+      legacyFragments: translation.map(
         (key, value) => MapEntry(key, value.toString()),
       ),
     );
@@ -570,9 +573,17 @@ final class EpubSession implements EbookSession {
           );
         }
         final unit = block.unit;
+        if (unit.fragments.isEmpty) {
+          throw EbookCodecException(
+            'Translation unit ${translation.unitId} contains no text.',
+          );
+        }
         final translatedFragments = <_TextReplacement>[];
-        for (final fragment in unit.fragments) {
-          final translatedText = translation.fragments[fragment.id];
+        for (var index = 0; index < unit.fragments.length; index++) {
+          final fragment = unit.fragments[index];
+          final translatedText = translation.legacyFragments == null
+              ? (index == 0 ? translation.text! : '')
+              : translation.legacyFragments![fragment.id];
           if (translatedText == null) {
             throw EbookCodecException(
               'Translation unit ${translation.unitId} is missing '
@@ -751,12 +762,14 @@ final class _StoredTranslation {
   const _StoredTranslation({
     required this.unitId,
     required this.resourcePath,
-    required this.fragments,
-  });
+    this.text,
+    this.legacyFragments,
+  }) : assert((text == null) != (legacyFragments == null));
 
   final String unitId;
   final String resourcePath;
-  final Map<String, String> fragments;
+  final String? text;
+  final Map<String, String>? legacyFragments;
 }
 
 final class _TextReplacement {

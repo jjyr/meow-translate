@@ -497,17 +497,13 @@ final class _FakeEngine implements TranslationEngine {
 
   @override
   Stream<TranslationEvent> translate(TranslationRequest request) async* {
-    requestedUnitIds.addAll(request.chunk.units.map((unit) => unit.id));
-    yield TranslationCompleted([
-      for (final unit in request.chunk.units)
-        TranslatedUnit(
-          unitId: unit.id,
-          fragments: {
-            for (final fragment in unit.fragments)
-              fragment.id: 'translated ${fragment.sourceText}',
-          },
-        ),
-    ]);
+    requestedUnitIds.add(request.unit.id);
+    yield TranslationCompleted(
+      TranslatedUnit(
+        unitId: request.unit.id,
+        text: 'translated ${request.unit.sourceText}',
+      ),
+    );
   }
 
   @override

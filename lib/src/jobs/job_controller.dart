@@ -364,7 +364,7 @@ final class JobController extends ChangeNotifier {
           TranslationFailed? failed;
           await for (final event in engine.translate(
             TranslationRequest(
-              chunk: TranslationChunk([unit]),
+              unit: unit,
               targetLanguage: job.targetLanguage,
               prompt: modelSettings.prompt,
               cancellationToken: cancellationToken,
@@ -395,10 +395,8 @@ final class JobController extends ChangeNotifier {
             return;
           }
 
-          final translated = completed.units
-              .where((value) => value.unitId == unit.id)
-              .firstOrNull;
-          if (translated == null) {
+          final translated = completed.unit;
+          if (translated.unitId != unit.id) {
             throw StateError('The engine omitted translation unit ${unit.id}.');
           }
           await session.saveTranslation(unit, translated);

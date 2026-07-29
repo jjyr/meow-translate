@@ -71,14 +71,69 @@ void main() {
     expect(repacked.firstCompression, CompressionType.none);
   });
 
-  test('translated repack changes only selected text ranges', () async {
-    final session = await codec.unpack(
-      source,
-      workspace: Directory('${temporaryDirectory.path}/workspace'),
-    );
+  test(
+    'program maps a plain translation onto the original XHTML structure',
+    () async {
+      final session = await codec.unpack(
+        source,
+        workspace: Directory('${temporaryDirectory.path}/workspace'),
+      );
+      final paragraph = (await session.readTranslationUnits().toList())
+          .singleWhere((unit) => unit.kind == 'p');
+      await session.saveTranslation(
+        paragraph,
+        TranslatedUnit(unitId: paragraph.id, text: '你好世界。'),
+      );
+      expect(await session.recordedTranslationUnitIds(), {paragraph.id});
+      final transcript =
+          jsonDecode(
+                (await File(
+                  '${session.workspace.path}/translations.jsonl',
+                ).readAsLines()).single,
+              )
+              as Map<String, dynamic>;
+      expect(transcript['source'], paragraph.sourceText);
+      expect(transcript['translation'], '你好世界。');
+
+      final output = File('${temporaryDirectory.path}/translated.epub');
+      await session.repack(output);
+      final original = readArchiveSnapshot(source);
+      final repacked = readArchiveSnapshot(output);
+
+      for (final entry in original.entries.entries) {
+        if (entry.key == fixtureChapterPath) {
+          continue;
+        }
+        expect(
+          repacked.entries[entry.key],
+          entry.value,
+          reason: 'Untranslated entry ${entry.key} changed.',
+        );
+      }
+      final translatedChapter = utf8.decode(
+        repacked.entries[fixtureChapterPath]!,
+      );
+      expect(
+        translatedChapter,
+        fixtureChapter.replaceFirst(
+          'Hello <em data-mark="yes">world</em>.',
+          '你好世界。<em data-mark="yes"></em>',
+        ),
+      );
+      expect(
+        translatedChapter,
+        contains('<h1 id="chapter-one">Chapter One</h1>'),
+      );
+      expect(translatedChapter, contains('<em data-mark="yes"></em>'));
+    },
+  );
+
+  test('repack remains compatible with legacy fragment transcripts', () async {
+    final workspace = Directory('${temporaryDirectory.path}/workspace');
+    final session = await codec.unpack(source, workspace: workspace);
     final paragraph = (await session.readTranslationUnits().toList())
         .singleWhere((unit) => unit.kind == 'p');
-    final translatedFragments = <String, String>{
+    final legacyFragments = {
       for (final fragment in paragraph.fragments)
         fragment.id: switch (fragment.sourceText) {
           'Hello ' => '你好 ',
@@ -87,42 +142,17 @@ void main() {
           final value => value,
         },
     };
-    await session.saveTranslation(
-      paragraph,
-      TranslatedUnit(unitId: paragraph.id, fragments: translatedFragments),
+    await File('${workspace.path}/translations.jsonl').writeAsString(
+      '${jsonEncode({'unit_id': paragraph.id, 'resource_path': paragraph.resourcePath, 'translation': legacyFragments})}\n',
     );
-    expect(await session.recordedTranslationUnitIds(), {paragraph.id});
 
-    final output = File('${temporaryDirectory.path}/translated.epub');
+    final output = File('${temporaryDirectory.path}/legacy-transcript.epub');
     await session.repack(output);
-    final original = readArchiveSnapshot(source);
-    final repacked = readArchiveSnapshot(output);
+    final chapter = utf8.decode(
+      readArchiveSnapshot(output).entries[fixtureChapterPath]!,
+    );
 
-    for (final entry in original.entries.entries) {
-      if (entry.key == fixtureChapterPath) {
-        continue;
-      }
-      expect(
-        repacked.entries[entry.key],
-        entry.value,
-        reason: 'Untranslated entry ${entry.key} changed.',
-      );
-    }
-    final translatedChapter = utf8.decode(
-      repacked.entries[fixtureChapterPath]!,
-    );
-    expect(
-      translatedChapter,
-      fixtureChapter.replaceFirst(
-        'Hello <em data-mark="yes">world</em>.',
-        '你好 <em data-mark="yes">世界</em>。',
-      ),
-    );
-    expect(
-      translatedChapter,
-      contains('<h1 id="chapter-one">Chapter One</h1>'),
-    );
-    expect(translatedChapter, contains('<em data-mark="yes">世界</em>'));
+    expect(chapter, contains('你好 <em data-mark="yes">世界</em>。'));
   });
 
   test(
@@ -133,8 +163,8 @@ void main() {
           '<em id="em1" data-mark="yes"><span xml:id="word">world</span></em>.'
           '</p>';
       const translatedBlock =
-          '<p class="lead">你好 '
-          '<em data-mark="yes"><span>世界</span></em>。</p>';
+          '<p class="lead">你好世界。'
+          '<em data-mark="yes"><span></span></em></p>';
       source = await createEpubFixture(
         temporaryDirectory,
         chapter: fixtureChapter.replaceFirst(
@@ -151,18 +181,7 @@ void main() {
           .singleWhere((unit) => unit.kind == 'p');
       await session.saveTranslation(
         paragraph,
-        TranslatedUnit(
-          unitId: paragraph.id,
-          fragments: {
-            for (final fragment in paragraph.fragments)
-              fragment.id: switch (fragment.sourceText) {
-                'Hello ' => '你好 ',
-                'world' => '世界',
-                '.' => '。',
-                final value => value,
-              },
-          },
-        ),
+        TranslatedUnit(unitId: paragraph.id, text: '你好世界。'),
       );
 
       final output = File('${temporaryDirectory.path}/bilingual.epub');
@@ -203,13 +222,7 @@ void main() {
     expect(paragraph.sourceText, 'One\u00a0thing');
     await session.saveTranslation(
       paragraph,
-      TranslatedUnit(
-        unitId: paragraph.id,
-        fragments: {
-          for (final fragment in paragraph.fragments)
-            fragment.id: fragment.sourceText,
-        },
-      ),
+      TranslatedUnit(unitId: paragraph.id, text: paragraph.sourceText),
     );
 
     final output = File('${temporaryDirectory.path}/named-entities.epub');
@@ -229,13 +242,7 @@ void main() {
         .singleWhere((unit) => unit.kind == 'p');
     await session.saveTranslation(
       paragraph,
-      TranslatedUnit(
-        unitId: paragraph.id,
-        fragments: {
-          for (final fragment in paragraph.fragments)
-            fragment.id: fragment.sourceText,
-        },
-      ),
+      TranslatedUnit(unitId: paragraph.id, text: paragraph.sourceText),
     );
     final transcript = File('${workspace.path}/translations.jsonl');
     await transcript.writeAsString(

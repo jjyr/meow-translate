@@ -27,9 +27,10 @@ flowchart LR
 completed translations, and repacks the output.
 
 No API assumes that an ebook has stable pages. A unit is normally a paragraph,
-heading, list item, table cell, or other block-level element. Inline formatting
-splits a unit into stable fragments so an AI model receives the full unit while
-Meow can preserve the original markup.
+heading, list item, table cell, or other block-level element. The model receives
+the unit's rendered source text as one plain string. Inline formatting splits
+the source into stable text slots so Meow can preserve the original markup
+without asking the model to reproduce it.
 
 ## EPUB fidelity model
 
@@ -45,10 +46,13 @@ The XHTML segmenter records:
 - SHA-256 source hashes;
 - ordered fragment identifiers.
 
-Translations are appended to `translations.jsonl`. Repacking re-segments the
-original XHTML, checks every source hash, XML-escapes translated text, and
-applies replacements from the highest offset to the lowest. Replacements
-therefore cannot shift offsets that have not been applied yet.
+Meow associates the plain-text response with the request's unit ID and appends
+that program-generated record to `translations.jsonl`. Repacking re-segments
+the original XHTML, checks every source hash, XML-escapes translated text, and
+places it in the unit's first text slot while clearing the remaining source
+text slots. XHTML elements and attributes therefore remain program-controlled;
+the model never emits markup or identifiers. Replacements are applied from the
+highest offset to the lowest so they cannot shift unapplied offsets.
 
 For bilingual output, the repacker leaves each original XHTML block
 byte-for-byte unchanged and inserts its translated clone immediately after it.
@@ -76,16 +80,18 @@ abstract interface class TranslationEngine {
 }
 ```
 
-Model-specific HTTP clients are implementation details. A request contains a
-bounded `TranslationChunk`, normally one unit, plus a cancellation token. An
-engine can emit token deltas, a validated completion, a failure, or
-cancellation. HTTP headers must arrive within 30 seconds, and an established
-stream may be idle for at most 90 seconds. Abandoning a job cancels the active
-request and closes its HTTP client.
+Model-specific HTTP clients are implementation details. A request contains
+exactly one translation unit plus a cancellation token. An engine can emit
+plain-text token deltas, a completion, a failure, or cancellation. HTTP headers
+must arrive within 30 seconds, and an established stream may be idle for at
+most 90 seconds. Abandoning a job cancels the active request and closes its
+HTTP client.
 
-The model receives source data as structured JSON. The prompt marks ebook text
-as untrusted and requires exact unit and fragment identifiers. Completed JSON
-is validated before it reaches the EPUB session.
+The model receives only the unit's source text and returns only translated
+text. Target language and the plain-text response contract are added to the
+instructions by the engine. Unit IDs, transcript JSON, and XHTML text-slot
+mapping are produced by Meow. The exact legacy default prompt that requested a
+JSON response is migrated automatically when configuration is loaded.
 
 ## Jobs and recovery
 

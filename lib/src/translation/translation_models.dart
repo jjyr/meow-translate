@@ -17,8 +17,6 @@ final class TranslationFragment {
   final String sourceHash;
   final int startOffset;
   final int endOffset;
-
-  Map<String, Object> toPromptJson() => {'id': id, 'text': sourceText};
 }
 
 final class TranslationUnit {
@@ -36,34 +34,17 @@ final class TranslationUnit {
 
   String get sourceText =>
       fragments.map((fragment) => fragment.sourceText).join();
-
-  Map<String, Object> toPromptJson() => {
-    'id': id,
-    'kind': kind,
-    'fragments': fragments
-        .map((fragment) => fragment.toPromptJson())
-        .toList(growable: false),
-  };
-}
-
-final class TranslationChunk {
-  const TranslationChunk(this.units);
-
-  final List<TranslationUnit> units;
-
-  int get sourceCharacterCount =>
-      units.fold(0, (total, unit) => total + unit.sourceText.length);
 }
 
 final class TranslationRequest {
   TranslationRequest({
-    required this.chunk,
+    required this.unit,
     required this.targetLanguage,
     required this.prompt,
     TranslationCancellationToken? cancellationToken,
   }) : cancellationToken = cancellationToken ?? TranslationCancellationToken();
 
-  final TranslationChunk chunk;
+  final TranslationUnit unit;
   final String targetLanguage;
   final String prompt;
   final TranslationCancellationToken cancellationToken;
@@ -90,10 +71,10 @@ final class TranslationCancellationToken {
 }
 
 final class TranslatedUnit {
-  const TranslatedUnit({required this.unitId, required this.fragments});
+  const TranslatedUnit({required this.unitId, required this.text});
 
   final String unitId;
-  final Map<String, String> fragments;
+  final String text;
 }
 
 sealed class TranslationEvent {
@@ -107,9 +88,9 @@ final class TranslationDelta extends TranslationEvent {
 }
 
 final class TranslationCompleted extends TranslationEvent {
-  const TranslationCompleted(this.units);
+  const TranslationCompleted(this.unit);
 
-  final List<TranslatedUnit> units;
+  final TranslatedUnit unit;
 }
 
 final class TranslationFailed extends TranslationEvent {

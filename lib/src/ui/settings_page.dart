@@ -126,12 +126,22 @@ final class _SettingsPageState extends State<SettingsPage> {
               _SettingsRow(
                 label: 'Prompt',
                 alignTop: true,
-                child: MacosTextField(
-                  controller: _promptController,
-                  minLines: 10,
-                  maxLines: 18,
-                  placeholder: 'Translation instructions',
-                  onChanged: (_) => setState(() => _saved = false),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    MacosTextField(
+                      controller: _promptController,
+                      minLines: 10,
+                      maxLines: 18,
+                      placeholder: 'Translation instructions',
+                      onChanged: (_) => setState(() => _saved = false),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Meow always sends one unit and accepts plain text only.',
+                      style: MacosTheme.of(context).typography.caption1,
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 22),

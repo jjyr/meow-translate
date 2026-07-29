@@ -25,62 +25,53 @@ void main() {
 
   setUp(() {
     request = TranslationRequest(
-      chunk: TranslationChunk([unit]),
+      unit: unit,
       targetLanguage: 'Simplified Chinese',
       prompt: 'Translate.',
     );
   });
 
-  test(
-    'DeepSeek engine streams deltas and validates completion JSON',
-    () async {
-      final payload = jsonEncode({
-        'units': [
-          {
-            'id': 'unit-1',
-            'fragments': [
-              {'id': 'f0', 'text': '你好'},
-            ],
-          },
-        ],
-      });
-      final split = payload.length ~/ 2;
-      final client = _SseClient([
-        _deepSeekDelta(payload.substring(0, split)),
-        _deepSeekDelta(payload.substring(split)),
-        'data: [DONE]',
-      ]);
-      final engine = DeepSeekTranslationEngine(
-        baseUrl: 'https://api.deepseek.test/v1/',
-        apiKey: 'secret',
-        model: 'deepseek-chat',
-        client: client,
-      );
+  test('DeepSeek engine streams plain-text translation deltas', () async {
+    const translation = '你好，世界';
+    final split = translation.length ~/ 2;
+    final client = _SseClient([
+      _deepSeekDelta(translation.substring(0, split)),
+      _deepSeekDelta(translation.substring(split)),
+      'data: [DONE]',
+    ]);
+    final engine = DeepSeekTranslationEngine(
+      baseUrl: 'https://api.deepseek.test/v1/',
+      apiKey: 'secret',
+      model: 'deepseek-chat',
+      client: client,
+    );
 
-      final events = await engine.translate(request).toList();
+    final events = await engine.translate(request).toList();
 
-      expect(events.whereType<TranslationDelta>(), hasLength(2));
-      final completed = events.whereType<TranslationCompleted>().single;
-      expect(completed.units.single.fragments, {'f0': '你好'});
-      expect(client.request.url.toString(), endsWith('/v1/chat/completions'));
-      expect(client.request.headers['Authorization'], 'Bearer secret');
-      expect(jsonDecode(client.request.body)['stream'], isTrue);
-    },
-  );
+    expect(events.whereType<TranslationDelta>(), hasLength(2));
+    final completed = events.whereType<TranslationCompleted>().single;
+    expect(completed.unit.unitId, 'unit-1');
+    expect(completed.unit.text, translation);
+    expect(client.request.url.toString(), endsWith('/v1/chat/completions'));
+    expect(client.request.headers['Authorization'], 'Bearer secret');
+    final body = jsonDecode(client.request.body) as Map<String, dynamic>;
+    expect(body['stream'], isTrue);
+    final messages = body['messages'] as List<dynamic>;
+    expect((messages.last as Map<String, dynamic>)['content'], unit.sourceText);
+    expect(
+      (messages.first as Map<String, dynamic>)['content'],
+      contains('Return only the translated plain text'),
+    );
+    expect(
+      (messages.first as Map<String, dynamic>)['content'],
+      contains('Target language: Simplified Chinese'),
+    );
+  });
 
   test('Codex engine parses Responses API output text events', () async {
-    final payload = jsonEncode({
-      'units': [
-        {
-          'id': 'unit-1',
-          'fragments': [
-            {'id': 'f0', 'text': '你好'},
-          ],
-        },
-      ],
-    });
+    const translation = '你好';
     final client = _SseClient([
-      'data: ${jsonEncode({'type': 'response.output_text.delta', 'delta': payload})}',
+      'data: ${jsonEncode({'type': 'response.output_text.delta', 'delta': translation})}',
       'data: ${jsonEncode({'type': 'response.completed'})}',
     ]);
     final engine = CodexTranslationEngine(
@@ -92,45 +83,43 @@ void main() {
 
     final events = await engine.translate(request).toList();
 
-    expect(events.whereType<TranslationDelta>().single.text, payload);
+    expect(events.whereType<TranslationDelta>().single.text, translation);
     expect(
-      events.whereType<TranslationCompleted>().single.units.single.fragments,
-      {'f0': '你好'},
+      events.whereType<TranslationCompleted>().single.unit.text,
+      translation,
     );
     expect(client.request.url.toString(), endsWith('/v1/responses'));
     final body = jsonDecode(client.request.body) as Map<String, dynamic>;
-    expect(body['instructions'], 'Translate.');
+    expect(body['instructions'], contains('Translate.'));
+    expect(
+      body['instructions'],
+      contains('Return only the translated plain text'),
+    );
+    expect(body['input'], unit.sourceText);
     expect(body['stream'], isTrue);
   });
 
-  test('engine rejects model output that changes fragment IDs', () async {
-    final client = _SseClient([
-      _deepSeekDelta(
-        jsonEncode({
-          'units': [
-            {
-              'id': 'unit-1',
-              'fragments': [
-                {'id': 'changed', 'text': '你好'},
-              ],
-            },
-          ],
-        }),
-      ),
-      'data: [DONE]',
-    ]);
-    final engine = DeepSeekTranslationEngine(
-      baseUrl: 'https://api.deepseek.test/v1',
-      apiKey: 'secret',
-      model: 'deepseek-chat',
-      client: client,
-    );
+  test(
+    'engine treats model output as opaque text instead of parsing JSON',
+    () async {
+      const translation = '{"translated":"你好"}';
+      final client = _SseClient([_deepSeekDelta(translation), 'data: [DONE]']);
+      final engine = DeepSeekTranslationEngine(
+        baseUrl: 'https://api.deepseek.test/v1',
+        apiKey: 'secret',
+        model: 'deepseek-chat',
+        client: client,
+      );
 
-    final events = await engine.translate(request).toList();
+      final events = await engine.translate(request).toList();
 
-    expect(events.whereType<TranslationCompleted>(), isEmpty);
-    expect(events.whereType<TranslationFailed>(), hasLength(1));
-  });
+      expect(events.whereType<TranslationFailed>(), isEmpty);
+      expect(
+        events.whereType<TranslationCompleted>().single.unit.text,
+        translation,
+      );
+    },
+  );
 
   test('cancellation stops a request that has not received headers', () async {
     final client = _StallingClient();
@@ -145,7 +134,7 @@ void main() {
     final eventsFuture = engine
         .translate(
           TranslationRequest(
-            chunk: TranslationChunk([unit]),
+            unit: unit,
             targetLanguage: 'Simplified Chinese',
             prompt: 'Translate.',
             cancellationToken: token,

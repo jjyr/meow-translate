@@ -21,6 +21,8 @@ rebuilds a new EPUB without changing the source package in place.
 - Restore sandbox file access across launches with security-scoped bookmarks.
 - Stream DeepSeek Chat Completions and OpenAI Responses API output with
   cancellation and bounded timeouts.
+- Send one plain-text unit per model request and keep response formatting,
+  identifiers, and transcript JSON under program control.
 - Store model configuration, including API keys, in a plain JSON file.
 - Notify on completion and reveal the output in Finder.
 - Preserve EPUB paths, package identifiers, original element identifiers,

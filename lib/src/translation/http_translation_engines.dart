@@ -39,87 +39,28 @@ abstract base class HttpTranslationEngine implements TranslationEngine {
     'Accept': 'text/event-stream',
   };
 
-  String buildInput(TranslationRequest request) => jsonEncode({
-    'target_language': request.targetLanguage,
-    'units': request.chunk.units
-        .map((unit) => unit.toPromptJson())
-        .toList(growable: false),
-  });
+  String buildInput(TranslationRequest request) => request.unit.sourceText;
 
-  List<TranslatedUnit> parseResult(String raw, TranslationRequest request) {
-    final jsonText = _extractJsonObject(raw);
-    final decoded = jsonDecode(jsonText);
-    if (decoded is! Map<String, dynamic> || decoded['units'] is! List) {
-      throw const TranslationEngineException(
-        'The model response does not contain a units array.',
-      );
-    }
+  String buildInstructions(TranslationRequest request) {
+    final customPrompt = request.prompt.trim();
+    return '''
+$customPrompt
 
-    final expectedUnits = {
-      for (final unit in request.chunk.units) unit.id: unit,
-    };
-    final translated = <TranslatedUnit>[];
+Target language: ${request.targetLanguage}
 
-    for (final value in decoded['units'] as List<dynamic>) {
-      if (value is! Map<String, dynamic>) {
-        throw const TranslationEngineException(
-          'The model returned an invalid unit.',
-        );
-      }
-      final unitId = value['id'];
-      final fragmentValues = value['fragments'];
-      final sourceUnit = expectedUnits[unitId];
-      if (unitId is! String ||
-          sourceUnit == null ||
-          fragmentValues is! List<dynamic>) {
-        throw const TranslationEngineException(
-          'The model changed or omitted a unit identifier.',
-        );
-      }
-
-      final fragments = <String, String>{};
-      for (final fragmentValue in fragmentValues) {
-        if (fragmentValue is! Map<String, dynamic> ||
-            fragmentValue['id'] is! String ||
-            fragmentValue['text'] is! String) {
-          throw const TranslationEngineException(
-            'The model returned an invalid text fragment.',
-          );
-        }
-        fragments[fragmentValue['id'] as String] =
-            fragmentValue['text'] as String;
-      }
-
-      final expectedFragmentIds = sourceUnit.fragments
-          .map((fragment) => fragment.id)
-          .toSet();
-      if (fragments.keys.toSet().difference(expectedFragmentIds).isNotEmpty ||
-          expectedFragmentIds.difference(fragments.keys.toSet()).isNotEmpty) {
-        throw TranslationEngineException(
-          'The model changed fragment identifiers in unit $unitId.',
-        );
-      }
-      translated.add(TranslatedUnit(unitId: unitId, fragments: fragments));
-    }
-
-    if (translated.map((unit) => unit.unitId).toSet().length !=
-        expectedUnits.length) {
-      throw const TranslationEngineException(
-        'The model omitted one or more translation units.',
-      );
-    }
-    return translated;
+Response protocol (overrides any earlier output-format instruction):
+Return only the translated plain text for the single source unit.
+Do not return JSON, identifiers, labels, commentary, quotes, or Markdown fences.
+''';
   }
 
-  String _extractJsonObject(String value) {
-    final start = value.indexOf('{');
-    final end = value.lastIndexOf('}');
-    if (start < 0 || end <= start) {
+  TranslatedUnit parseResult(String raw, TranslationRequest request) {
+    if (raw.trim().isEmpty) {
       throw const TranslationEngineException(
-        'The model response is not valid JSON.',
+        'The model returned an empty translation.',
       );
     }
-    return value.substring(start, end + 1);
+    return TranslatedUnit(unitId: request.unit.id, text: raw);
   }
 
   Future<http.StreamedResponse> send(
@@ -273,7 +214,7 @@ final class DeepSeekTranslationEngine extends HttpTranslationEngine {
         'stream': true,
         'temperature': 0.2,
         'messages': [
-          {'role': 'system', 'content': request.prompt},
+          {'role': 'system', 'content': buildInstructions(request)},
           {'role': 'user', 'content': buildInput(request)},
         ],
       }, request.cancellationToken);
@@ -342,7 +283,7 @@ final class CodexTranslationEngine extends HttpTranslationEngine {
       final response = await send(endpoint('responses'), {
         'model': model,
         'stream': true,
-        'instructions': request.prompt,
+        'instructions': buildInstructions(request),
         'input': buildInput(request),
       }, request.cancellationToken);
 
