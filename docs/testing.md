@@ -28,7 +28,9 @@ legacy job migration, serialized concurrent history writes, private history
 permissions, atomic output filename reservation, stalled-request
 cancellation, SSE idle timeouts, missing-workspace progress reset, monotonic
 cancel state, interrupted-output recovery, terminal workspace cleanup, and
-legacy output-folder migration.
+legacy output-folder migration. Recovery regressions also cover cross-job
+output ownership, interrupted JSONL tail repair, and migration of unfinished
+legacy cache workspaces without retranslating completed units.
 
 ## Real-book suite
 

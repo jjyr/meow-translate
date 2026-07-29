@@ -336,6 +336,7 @@ final class EpubSession implements EbookSession {
     if (!await _translationLog.exists()) {
       return {};
     }
+    await _repairIncompleteTranslationTail();
     final unitIds = <String>{};
     await for (final line
         in _translationLog
@@ -345,13 +346,7 @@ final class EpubSession implements EbookSession {
       if (line.trim().isEmpty) {
         continue;
       }
-      final decoded = jsonDecode(line);
-      if (decoded is! Map<String, dynamic> || decoded['unit_id'] is! String) {
-        throw const EbookCodecException(
-          'The translation transcript is invalid.',
-        );
-      }
-      unitIds.add(decoded['unit_id'] as String);
+      unitIds.add(_decodeTranslationRecord(line).unitId);
     }
     return unitIds;
   }
@@ -445,6 +440,7 @@ final class EpubSession implements EbookSession {
     if (!await _translationLog.exists()) {
       return {};
     }
+    await _repairIncompleteTranslationTail();
     final translations = <String, _StoredTranslation>{};
     await for (final line
         in _translationLog
@@ -454,24 +450,85 @@ final class EpubSession implements EbookSession {
       if (line.trim().isEmpty) {
         continue;
       }
-      final decoded = jsonDecode(line);
-      if (decoded is! Map<String, dynamic> ||
-          decoded['unit_id'] is! String ||
-          decoded['resource_path'] is! String ||
-          decoded['translation'] is! Map<String, dynamic>) {
-        throw const EbookCodecException(
-          'The translation transcript is invalid.',
-        );
-      }
-      translations[decoded['unit_id'] as String] = _StoredTranslation(
-        unitId: decoded['unit_id'] as String,
-        resourcePath: decoded['resource_path'] as String,
-        fragments: (decoded['translation'] as Map<String, dynamic>).map(
-          (key, value) => MapEntry(key, value.toString()),
-        ),
-      );
+      final translation = _decodeTranslationRecord(line);
+      translations[translation.unitId] = translation;
     }
     return translations;
+  }
+
+  Future<void> _repairIncompleteTranslationTail() async {
+    final length = await _translationLog.length();
+    if (length == 0) {
+      return;
+    }
+
+    final reader = await _translationLog.open();
+    late final int validLength;
+    late final List<int> tail;
+    try {
+      await reader.setPosition(length - 1);
+      if (await reader.readByte() == 0x0a) {
+        return;
+      }
+
+      var lastNewline = -1;
+      var chunkEnd = length;
+      const chunkSize = 8192;
+      while (chunkEnd > 0 && lastNewline < 0) {
+        final chunkStart = chunkEnd > chunkSize ? chunkEnd - chunkSize : 0;
+        await reader.setPosition(chunkStart);
+        final bytes = await reader.read(chunkEnd - chunkStart);
+        for (var index = bytes.length - 1; index >= 0; index--) {
+          if (bytes[index] == 0x0a) {
+            lastNewline = chunkStart + index;
+            break;
+          }
+        }
+        chunkEnd = chunkStart;
+      }
+      validLength = lastNewline + 1;
+      await reader.setPosition(validLength);
+      tail = await reader.read(length - validLength);
+    } finally {
+      await reader.close();
+    }
+
+    var completeRecord = false;
+    try {
+      _decodeTranslationRecord(utf8.decode(tail));
+      completeRecord = true;
+    } on Object {
+      completeRecord = false;
+    }
+
+    final writer = await _translationLog.open(mode: FileMode.append);
+    try {
+      if (completeRecord) {
+        await writer.writeByte(0x0a);
+      } else {
+        await writer.truncate(validLength);
+      }
+      await writer.flush();
+    } finally {
+      await writer.close();
+    }
+  }
+
+  _StoredTranslation _decodeTranslationRecord(String line) {
+    final decoded = jsonDecode(line);
+    if (decoded is! Map<String, dynamic> ||
+        decoded['unit_id'] is! String ||
+        decoded['resource_path'] is! String ||
+        decoded['translation'] is! Map<String, dynamic>) {
+      throw const EbookCodecException('The translation transcript is invalid.');
+    }
+    return _StoredTranslation(
+      unitId: decoded['unit_id'] as String,
+      resourcePath: decoded['resource_path'] as String,
+      fragments: (decoded['translation'] as Map<String, dynamic>).map(
+        (key, value) => MapEntry(key, value.toString()),
+      ),
+    );
   }
 
   Future<Map<String, File>> _materializePatches(

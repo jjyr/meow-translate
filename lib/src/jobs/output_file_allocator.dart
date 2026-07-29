@@ -24,9 +24,18 @@ final class OutputFileAllocator {
         path.join(directory.path, '$sourceName - $language$suffixText.epub'),
       );
       final lock = _lockFor(output);
+      var createdLock = false;
       try {
         await lock.create(exclusive: true);
+        createdLock = true;
+        await lock.writeAsString(jobId, flush: true);
       } on FileSystemException {
+        if (createdLock) {
+          if (await lock.exists()) {
+            await lock.delete();
+          }
+          rethrow;
+        }
         if (await lock.exists()) {
           continue;
         }
@@ -52,7 +61,7 @@ final class OutputFileAllocator {
     );
   }
 
-  Future<void> cleanInterruptedReservation({
+  Future<bool> cleanInterruptedReservation({
     required String outputPath,
     required String jobId,
   }) async {
@@ -62,12 +71,14 @@ final class OutputFileAllocator {
     if (await staging.exists()) {
       await staging.delete();
     }
-    if (await lock.exists()) {
-      await lock.delete();
+    if (!await _isOwnedBy(lock, jobId)) {
+      return false;
     }
     if (await output.exists()) {
       await output.delete();
     }
+    await lock.delete();
+    return true;
   }
 
   static File _lockFor(File output) => File('${output.path}.meow-reservation');
@@ -75,10 +86,21 @@ final class OutputFileAllocator {
   static File _stagingFor(File output, String jobId) => File(
     path.join(output.parent.path, '.${path.basename(output.path)}.$jobId.tmp'),
   );
+
+  static Future<bool> _isOwnedBy(File lock, String jobId) async {
+    if (!await lock.exists()) {
+      return false;
+    }
+    try {
+      return await lock.readAsString() == jobId;
+    } on FileSystemException {
+      return false;
+    }
+  }
 }
 
 final class OutputFileReservation {
-  const OutputFileReservation._({
+  OutputFileReservation._({
     required this.output,
     required this.staging,
     required File lock,
@@ -87,6 +109,7 @@ final class OutputFileReservation {
   final File output;
   final File staging;
   final File _lock;
+  bool _published = false;
 
   Future<File> publish() async {
     if (!await staging.exists()) {
@@ -99,14 +122,7 @@ final class OutputFileReservation {
       );
     }
     await staging.rename(output.path);
-    if (await _lock.exists()) {
-      try {
-        await _lock.delete();
-      } on FileSystemException {
-        // The complete output is already atomically published. A stale hidden
-        // lock is harmless and will be skipped by future allocations.
-      }
-    }
+    _published = true;
     return output;
   }
 
@@ -116,6 +132,25 @@ final class OutputFileReservation {
     }
     if (await _lock.exists()) {
       await _lock.delete();
+    }
+  }
+
+  Future<void> rollback() async {
+    if (_published && await output.exists()) {
+      await output.delete();
+    }
+    await cancel();
+  }
+
+  Future<void> releaseOwnership() async {
+    if (!await _lock.exists()) {
+      return;
+    }
+    try {
+      await _lock.delete();
+    } on FileSystemException {
+      // The completed output is already durable. A stale hidden marker is
+      // harmless because allocators also verify that the final path exists.
     }
   }
 }

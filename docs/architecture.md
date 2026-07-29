@@ -106,7 +106,14 @@ If a workspace is nevertheless missing or damaged, Meow clears all persisted
 unit progress before translating again. On every restore it verifies that each
 persisted completion identifier is present in the translation transcript; it
 never trusts job progress without its overlay record. Completed and abandoned
-workspaces are deleted, including legacy cache locations.
+workspaces are deleted. An unfinished workspace from the legacy cache location
+is atomically moved, or staged and copied across filesystems, before recovery
+so paid translations are not discarded during upgrade.
+
+The append-only translation transcript is repaired before it is read. A valid
+final JSON record without a newline is completed; an invalid, unterminated
+tail record is truncated back to the previous newline. Malformed records that
+were fully terminated still fail validation.
 
 `abandoned` is a monotonic terminal state. Repository updates reject stale
 worker snapshots that attempt to replace it, and the controller reloads the
@@ -121,9 +128,12 @@ again.
 Output names are reserved with an exclusive hidden lock. Repacking writes to a
 hidden staging file on the same filesystem as the destination, while the final
 `.epub` path remains absent. A complete ZIP is atomically renamed into place.
-The reservation path is persisted so startup can remove interrupted staging,
-locks, or unpublished output before retrying. Concurrent books with the same
-basename receive different numbered paths.
+The reservation path is persisted, and its marker contains the owner job ID.
+Startup may delete an interrupted final output only while that marker still
+matches the recovering job. Failure and cancellation remove the marker and
+immediately persist a cleared output path, so an older job can never delete a
+newer job's file after the friendly name is reused. Concurrent books with the
+same basename receive different numbered paths.
 
 Remembered output paths are usable only with a matching security-scoped
 bookmark. A legacy configuration without one leaves the field empty and asks

@@ -167,6 +167,68 @@ void main() {
     expect(controller.jobById('job-1')?.completedUnitIds, {'unit-1', 'unit-2'});
   });
 
+  test('unfinished legacy cache workspace is migrated and resumed', () async {
+    final legacyWorkspace = paths.legacyWorkspaceFor('job-1');
+    final incompleteCurrentWorkspace = paths.workspaceFor('job-1');
+    await legacyWorkspace.create(recursive: true);
+    await incompleteCurrentWorkspace.create(recursive: true);
+    await File(
+      '${incompleteCurrentWorkspace.path}/incomplete',
+    ).writeAsString('stale');
+    await File(
+      '${legacyWorkspace.path}/epub-workspace.json',
+    ).writeAsString('fake manifest');
+    final session = _FakeSession(
+      units: [_unit('unit-1'), _unit('unit-2')],
+      recordedUnitIds: const {'unit-1'},
+    );
+    final engine = _FakeEngine();
+    await jobRepository.save([
+      _job(
+        outputDirectory: outputDirectory,
+        totalUnits: 2,
+        completedUnitIds: const {'unit-1'},
+      ),
+    ]);
+    final controller = createController(session: session, engine: engine);
+
+    await controller.initialize();
+    await _waitUntil(
+      () =>
+          controller.jobById('job-1')?.status == TranslationJobStatus.completed,
+    );
+
+    expect(engine.requestedUnitIds, ['unit-2']);
+    expect(session.savedUnitIds, ['unit-2']);
+    expect(await legacyWorkspace.exists(), isFalse);
+  });
+
+  test('repack failure clears the cancelled output reservation path', () async {
+    final session = _FakeSession(
+      units: [_unit('unit-1')],
+      repackError: StateError('repack failed'),
+    );
+    final engine = _FakeEngine();
+    await jobRepository.save([_job(outputDirectory: outputDirectory)]);
+    final controller = createController(session: session, engine: engine);
+
+    await controller.initialize();
+    await _waitUntil(
+      () =>
+          controller.jobById('job-1')?.status ==
+          TranslationJobStatus.waitingForAction,
+    );
+    await engine.closed.future;
+    await _waitUntilAsync(() async {
+      final stored = (await jobRepository.load()).single;
+      return stored.status == TranslationJobStatus.waitingForAction &&
+          stored.outputPath == null;
+    });
+
+    expect(controller.jobById('job-1')?.outputPath, isNull);
+    expect(outputDirectory.listSync(), isEmpty);
+  });
+
   test(
     'cancel during repack removes staging and never publishes output',
     () async {
@@ -197,38 +259,45 @@ void main() {
         controller.jobById('job-1')?.status,
         TranslationJobStatus.abandoned,
       );
+      expect(controller.jobById('job-1')?.outputPath, isNull);
       expect(outputDirectory.listSync(), isEmpty);
     },
   );
 
-  test('startup cleans a persisted interrupted output reservation', () async {
-    const allocator = OutputFileAllocator();
-    final reservation = await allocator.reserve(
-      directory: outputDirectory,
-      sourcePath: '/books/book.epub',
-      targetLanguage: 'English',
-      jobId: 'job-1',
-    );
-    await reservation.staging.writeAsString('partial zip');
-    await jobRepository.save([
-      _job(outputDirectory: outputDirectory).copyWith(
-        status: TranslationJobStatus.repacking,
-        outputPath: reservation.output.path,
-      ),
-    ]);
-    final controller = createController(
-      session: _FakeSession(units: [_unit('unit-1')]),
-      engine: _FakeEngine(),
-    );
+  test(
+    'startup cleans an interrupted output only when its marker is owned',
+    () async {
+      const allocator = OutputFileAllocator();
+      final reservation = await allocator.reserve(
+        directory: outputDirectory,
+        sourcePath: '/books/book.epub',
+        targetLanguage: 'English',
+        jobId: 'job-1',
+      );
+      await reservation.staging.writeAsString('complete but interrupted');
+      await reservation.publish();
+      expect(await reservation.output.exists(), isTrue);
+      await jobRepository.save([
+        _job(outputDirectory: outputDirectory).copyWith(
+          status: TranslationJobStatus.repacking,
+          outputPath: reservation.output.path,
+        ),
+      ]);
+      final controller = createController(
+        session: _FakeSession(units: [_unit('unit-1')]),
+        engine: _FakeEngine(),
+      );
 
-    await controller.initialize();
+      await controller.initialize();
 
-    final recovered = controller.jobById('job-1')!;
-    expect(recovered.status, TranslationJobStatus.waitingForAction);
-    expect(recovered.outputPath, isNull);
-    expect(await reservation.staging.exists(), isFalse);
-    expect(outputDirectory.listSync(), isEmpty);
-  });
+      final recovered = controller.jobById('job-1')!;
+      expect(recovered.status, TranslationJobStatus.waitingForAction);
+      expect(recovered.outputPath, isNull);
+      expect(await reservation.staging.exists(), isFalse);
+      expect(await reservation.output.exists(), isFalse);
+      expect(outputDirectory.listSync(), isEmpty);
+    },
+  );
 
   test(
     'startup removes current and legacy workspaces for completed jobs',
@@ -303,6 +372,16 @@ Future<void> _waitUntil(bool Function() condition) async {
   fail('Timed out waiting for the job state to change.');
 }
 
+Future<void> _waitUntilAsync(Future<bool> Function() condition) async {
+  for (var attempt = 0; attempt < 200; attempt++) {
+    if (await condition()) {
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  fail('Timed out waiting for the persisted job state to change.');
+}
+
 final class _FakeCodec implements EbookCodec {
   const _FakeCodec(this.session);
 
@@ -342,6 +421,7 @@ final class _FakeSession implements EbookSession {
     this.allowSave,
     this.repackStarted,
     this.allowRepack,
+    this.repackError,
   }) : recordedUnitIds = recordedUnitIds ?? {};
 
   final List<TranslationUnit> units;
@@ -350,6 +430,7 @@ final class _FakeSession implements EbookSession {
   final Completer<void>? allowSave;
   final Completer<void>? repackStarted;
   final Completer<void>? allowRepack;
+  final Object? repackError;
   final List<String> savedUnitIds = [];
   Directory currentWorkspace = Directory.systemTemp;
 
@@ -392,6 +473,9 @@ final class _FakeSession implements EbookSession {
       repackStarted!.complete();
     }
     await output.writeAsString('partial');
+    if (repackError != null) {
+      throw repackError!;
+    }
     await allowRepack?.future;
     await output.writeAsString(savedUnitIds.join(','));
     return output;

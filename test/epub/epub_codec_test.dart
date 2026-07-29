@@ -161,6 +161,38 @@ void main() {
     expect(chapter, isNot(contains('&amp;nbsp;')));
   });
 
+  test('recovery truncates an interrupted final translation record', () async {
+    final workspace = Directory('${temporaryDirectory.path}/workspace');
+    final session = await codec.unpack(source, workspace: workspace);
+    final paragraph = (await session.readTranslationUnits().toList())
+        .singleWhere((unit) => unit.kind == 'p');
+    await session.saveTranslation(
+      paragraph,
+      TranslatedUnit(
+        unitId: paragraph.id,
+        fragments: {
+          for (final fragment in paragraph.fragments)
+            fragment.id: fragment.sourceText,
+        },
+      ),
+    );
+    final transcript = File('${workspace.path}/translations.jsonl');
+    await transcript.writeAsString(
+      '{"unit_id":"interrupted',
+      mode: FileMode.append,
+      flush: true,
+    );
+
+    expect(await session.recordedTranslationUnitIds(), {paragraph.id});
+    final repaired = await transcript.readAsString();
+    expect(repaired, endsWith('\n'));
+    expect(repaired, isNot(contains('interrupted')));
+
+    final output = File('${temporaryDirectory.path}/recovered.epub');
+    await session.repack(output);
+    expect(readArchiveSnapshot(output).entries, contains(fixtureChapterPath));
+  });
+
   test('unpack rejects a ZIP path traversal entry', () async {
     final archive = Archive()
       ..add(

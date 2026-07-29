@@ -246,6 +246,11 @@ final class JobController extends ChangeNotifier {
       if (job == null || await _stopIfAbandoned(jobId)) {
         return;
       }
+      await _migrateLegacyWorkspace(jobId);
+      job = jobById(jobId);
+      if (job == null || await _stopIfAbandoned(jobId)) {
+        return;
+      }
       final workspace = paths.workspaceFor(jobId);
       final manifest = File(path.join(workspace.path, 'epub-workspace.json'));
       final EbookSession session;
@@ -469,33 +474,29 @@ final class JobController extends ChangeNotifier {
         );
         job = job.copyWith(outputPath: reservation.output.path);
         if (!await _replace(job)) {
-          await reservation.cancel();
+          await _cancelOutputReservation(jobId, reservation);
           return;
         }
         if (await _stopIfAbandoned(jobId)) {
-          await reservation.cancel();
+          await _cancelOutputReservation(jobId, reservation);
           return;
         }
-        try {
-          await session.repack(reservation.staging);
-        } on Object {
-          await reservation.cancel();
-          rethrow;
-        }
+        await session.repack(reservation.staging);
         if (await _stopIfAbandoned(jobId)) {
-          await reservation.cancel();
+          await _cancelOutputReservation(jobId, reservation);
           return;
         }
         output = await reservation.publish();
         outputPublished = true;
-        reservation = null;
         if (await _stopIfAbandoned(jobId)) {
-          await output.delete();
+          await _cancelOutputReservation(jobId, reservation, rollback: true);
+          reservation = null;
           return;
         }
         job = jobById(jobId);
         if (job == null) {
-          await output.delete();
+          await reservation.rollback();
+          reservation = null;
           return;
         }
         final completed = await _replace(
@@ -507,14 +508,22 @@ final class JobController extends ChangeNotifier {
           ),
         );
         if (!completed) {
-          await output.delete();
+          await _cancelOutputReservation(jobId, reservation, rollback: true);
+          reservation = null;
           await _stopIfAbandoned(jobId);
           return;
         }
+        await reservation.releaseOwnership();
+        reservation = null;
       } on Object {
-        await reservation?.cancel();
-        if (outputPublished && await output.exists()) {
-          await output.delete();
+        final failedReservation = reservation;
+        if (failedReservation != null) {
+          await _cancelOutputReservation(
+            jobId,
+            failedReservation,
+            rollback: outputPublished,
+          );
+          reservation = null;
         }
         rethrow;
       } finally {
@@ -588,6 +597,22 @@ final class JobController extends ChangeNotifier {
     }
   }
 
+  Future<void> _cancelOutputReservation(
+    String jobId,
+    OutputFileReservation reservation, {
+    bool rollback = false,
+  }) async {
+    if (rollback) {
+      await reservation.rollback();
+    } else {
+      await reservation.cancel();
+    }
+    final current = jobById(jobId);
+    if (current?.outputPath == reservation.output.path) {
+      await _replace(current!.copyWith(clearOutputPath: true));
+    }
+  }
+
   Future<bool> _stopIfAbandoned(String jobId) async {
     if (!_abandonRequested.contains(jobId) &&
         jobById(jobId)?.status != TranslationJobStatus.abandoned) {
@@ -610,6 +635,73 @@ final class JobController extends ChangeNotifier {
     ]) {
       if (await workspace.exists()) {
         await workspace.delete(recursive: true);
+      }
+    }
+  }
+
+  Future<void> _migrateLegacyWorkspace(String jobId) async {
+    final legacy = paths.legacyWorkspaceFor(jobId);
+    final current = paths.workspaceFor(jobId);
+    if (!await legacy.exists()) {
+      return;
+    }
+    if (await current.exists()) {
+      final currentManifest = File(
+        path.join(current.path, 'epub-workspace.json'),
+      );
+      final legacyManifest = File(
+        path.join(legacy.path, 'epub-workspace.json'),
+      );
+      if (await currentManifest.exists() || !await legacyManifest.exists()) {
+        return;
+      }
+      await current.delete(recursive: true);
+    }
+    await current.parent.create(recursive: true);
+    try {
+      await legacy.rename(current.path);
+      return;
+    } on FileSystemException {
+      // Application Support and Cache are normally on the same volume. Fall
+      // back to a staged copy if the filesystem cannot rename between them.
+    }
+
+    final staging = Directory('${current.path}.migrating');
+    if (await staging.exists()) {
+      await staging.delete(recursive: true);
+    }
+    try {
+      await _copyDirectory(legacy, staging);
+      if (await current.exists()) {
+        await staging.delete(recursive: true);
+        return;
+      }
+      await staging.rename(current.path);
+      await legacy.delete(recursive: true);
+    } on Object {
+      if (await staging.exists()) {
+        await staging.delete(recursive: true);
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _copyDirectory(Directory source, Directory destination) async {
+    await destination.create(recursive: true);
+    await for (final entity in source.list(followLinks: false)) {
+      final targetPath = path.join(
+        destination.path,
+        path.basename(entity.path),
+      );
+      if (entity is File) {
+        await entity.copy(targetPath);
+      } else if (entity is Directory) {
+        await _copyDirectory(entity, Directory(targetPath));
+      } else {
+        throw FileSystemException(
+          'Unsupported entry in a Meow workspace.',
+          entity.path,
+        );
       }
     }
   }
