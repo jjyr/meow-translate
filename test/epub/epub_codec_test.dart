@@ -128,33 +128,6 @@ void main() {
     },
   );
 
-  test('repack remains compatible with legacy fragment transcripts', () async {
-    final workspace = Directory('${temporaryDirectory.path}/workspace');
-    final session = await codec.unpack(source, workspace: workspace);
-    final paragraph = (await session.readTranslationUnits().toList())
-        .singleWhere((unit) => unit.kind == 'p');
-    final legacyFragments = {
-      for (final fragment in paragraph.fragments)
-        fragment.id: switch (fragment.sourceText) {
-          'Hello ' => '你好 ',
-          'world' => '世界',
-          '.' => '。',
-          final value => value,
-        },
-    };
-    await File('${workspace.path}/translations.jsonl').writeAsString(
-      '${jsonEncode({'unit_id': paragraph.id, 'resource_path': paragraph.resourcePath, 'translation': legacyFragments})}\n',
-    );
-
-    final output = File('${temporaryDirectory.path}/legacy-transcript.epub');
-    await session.repack(output);
-    final chapter = utf8.decode(
-      readArchiveSnapshot(output).entries[fixtureChapterPath]!,
-    );
-
-    expect(chapter, contains('你好 <em data-mark="yes">世界</em>。'));
-  });
-
   test(
     'bilingual repack keeps the original block before an id-free clone',
     () async {

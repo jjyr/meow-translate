@@ -43,18 +43,13 @@ final class ModelSettings {
     };
   }
 
-  factory ModelSettings.fromJson(Map<String, dynamic> json) {
-    final prompt = json['prompt'] as String;
-    return ModelSettings(
-      provider: TranslationProvider.values.byName(json['provider'] as String),
-      baseUrl: json['base_url'] as String,
-      model: json['model'] as String,
-      apiKey: json['api_key'] as String,
-      prompt: _usesLegacyStructuredResponse(prompt)
-          ? defaultTranslationPrompt
-          : prompt,
-    );
-  }
+  factory ModelSettings.fromJson(Map<String, dynamic> json) => ModelSettings(
+    provider: TranslationProvider.values.byName(json['provider'] as String),
+    baseUrl: json['base_url'] as String,
+    model: json['model'] as String,
+    apiKey: json['api_key'] as String,
+    prompt: json['prompt'] as String,
+  );
 
   final TranslationProvider provider;
   final String baseUrl;
@@ -83,11 +78,6 @@ final class ModelSettings {
     'prompt': prompt,
   };
 }
-
-bool _usesLegacyStructuredResponse(String prompt) =>
-    prompt.contains('"units"') &&
-    prompt.contains('"fragments"') &&
-    prompt.contains('Never change identifiers.');
 
 final class AppSettings {
   const AppSettings({

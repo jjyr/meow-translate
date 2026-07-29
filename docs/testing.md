@@ -19,7 +19,6 @@ The generated EPUB fixture covers:
 - no-op repacking;
 - translated text replacement;
 - plain-text model responses and program-owned unit association;
-- legacy fragment-transcript compatibility;
 - bilingual original-block preservation and identifier-free translated clones;
 - named XHTML entity decoding without double-escaping;
 - untouched binary resource preservation;

@@ -90,8 +90,7 @@ HTTP client.
 The model receives only the unit's source text and returns only translated
 text. Target language and the plain-text response contract are added to the
 instructions by the engine. Unit IDs, transcript JSON, and XHTML text-slot
-mapping are produced by Meow. The exact legacy default prompt that requested a
-JSON response is migrated automatically when configuration is loaded.
+mapping are produced by Meow.
 
 ## Jobs and recovery
 

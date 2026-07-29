@@ -514,26 +514,14 @@ final class EpubSession implements EbookSession {
     final decoded = jsonDecode(line);
     if (decoded is! Map<String, dynamic> ||
         decoded['unit_id'] is! String ||
-        decoded['resource_path'] is! String) {
-      throw const EbookCodecException('The translation transcript is invalid.');
-    }
-    final translation = decoded['translation'];
-    if (translation is String) {
-      return _StoredTranslation(
-        unitId: decoded['unit_id'] as String,
-        resourcePath: decoded['resource_path'] as String,
-        text: translation,
-      );
-    }
-    if (translation is! Map<String, dynamic>) {
+        decoded['resource_path'] is! String ||
+        decoded['translation'] is! String) {
       throw const EbookCodecException('The translation transcript is invalid.');
     }
     return _StoredTranslation(
       unitId: decoded['unit_id'] as String,
       resourcePath: decoded['resource_path'] as String,
-      legacyFragments: translation.map(
-        (key, value) => MapEntry(key, value.toString()),
-      ),
+      text: decoded['translation'] as String,
     );
   }
 
@@ -581,15 +569,7 @@ final class EpubSession implements EbookSession {
         final translatedFragments = <_TextReplacement>[];
         for (var index = 0; index < unit.fragments.length; index++) {
           final fragment = unit.fragments[index];
-          final translatedText = translation.legacyFragments == null
-              ? (index == 0 ? translation.text! : '')
-              : translation.legacyFragments![fragment.id];
-          if (translatedText == null) {
-            throw EbookCodecException(
-              'Translation unit ${translation.unitId} is missing '
-              '${fragment.id}.',
-            );
-          }
+          final translatedText = index == 0 ? translation.text : '';
           final encodedSource = source.substring(
             fragment.startOffset,
             fragment.endOffset,
@@ -762,14 +742,12 @@ final class _StoredTranslation {
   const _StoredTranslation({
     required this.unitId,
     required this.resourcePath,
-    this.text,
-    this.legacyFragments,
-  }) : assert((text == null) != (legacyFragments == null));
+    required this.text,
+  });
 
   final String unitId;
   final String resourcePath;
-  final String? text;
-  final Map<String, String>? legacyFragments;
+  final String text;
 }
 
 final class _TextReplacement {
