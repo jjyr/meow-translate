@@ -37,6 +37,30 @@ cp "\$1" "\$2"
     expect(installation.version, contains('calibre 9.0.0'));
   });
 
+  test('detection timeout terminates and reaps the probe process', () async {
+    final pidFile = File('${temporaryDirectory.path}/probe.pid');
+    await executable.writeAsString('''
+#!/bin/sh
+echo \$\$ > "${pidFile.path}"
+exec sleep 30
+''');
+    await Process.run('chmod', ['755', executable.path]);
+    final service = CalibreService(
+      detectionTimeout: const Duration(seconds: 2),
+    );
+
+    await service.detect(customExecutable: executable.path);
+
+    expect(await pidFile.exists(), isTrue);
+    final processId = (await pidFile.readAsString()).trim();
+    final running = await Process.run('kill', ['-0', processId]);
+    expect(
+      running.exitCode,
+      isNot(0),
+      reason: 'The timed-out ebook-convert probe must not remain alive.',
+    );
+  });
+
   test('converts a book through ebook-convert', () async {
     const service = CalibreService();
     final input = File('${temporaryDirectory.path}/book.mobi');

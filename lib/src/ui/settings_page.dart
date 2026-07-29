@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show Divider, SelectableText;
 import 'package:macos_ui/macos_ui.dart';
 
+import '../ebook/calibre_service.dart';
 import '../jobs/job_controller.dart';
 import '../l10n/app_localizations.dart';
 import '../settings/app_settings.dart';
@@ -260,32 +261,44 @@ final class _SettingsPageState extends State<SettingsPage> {
                             ? context.l10n.t('calibreMissing')
                             : '${installation.version} · '
                                   '${installation.executable}';
-                        return Row(
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(
-                              child: Text(
-                                message,
-                                style: MacosTheme.of(
-                                  context,
-                                ).typography.caption1.copyWith(color: color),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    message,
+                                    style: MacosTheme.of(context)
+                                        .typography
+                                        .caption1
+                                        .copyWith(color: color),
+                                  ),
+                                ),
+                                PushButton(
+                                  controlSize: ControlSize.small,
+                                  secondary: true,
+                                  onPressed: widget.controller.checkingCalibre
+                                      ? null
+                                      : () => widget.controller.refreshCalibre(
+                                          customExecutable: _calibreController
+                                              .text
+                                              .trim(),
+                                        ),
+                                  child: Text(context.l10n.t('retryDetection')),
+                                ),
+                              ],
+                            ),
+                            if (installation == null) ...[
+                              const SizedBox(height: 5),
+                              const SelectableText(
+                                CalibreService.installCommand,
                               ),
-                            ),
-                            PushButton(
-                              controlSize: ControlSize.small,
-                              secondary: true,
-                              onPressed: widget.controller.checkingCalibre
-                                  ? null
-                                  : widget.controller.refreshCalibre,
-                              child: Text(context.l10n.t('retryDetection')),
-                            ),
+                            ],
                           ],
                         );
                       },
                     ),
-                    if (widget.controller.calibreInstallation == null) ...[
-                      const SizedBox(height: 5),
-                      const SelectableText('brew install --cask calibre'),
-                    ],
                   ],
                 ),
               ),

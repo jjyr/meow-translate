@@ -128,14 +128,17 @@ final class JobController extends ChangeNotifier {
     await refreshCalibre();
   }
 
-  Future<void> refreshCalibre() async {
+  Future<void> refreshCalibre({String? customExecutable}) async {
     checkingCalibre = true;
     notifyListeners();
-    calibreInstallation = await _bookConverter.detect(
-      customExecutable: settings.calibreExecutable,
-    );
-    checkingCalibre = false;
-    notifyListeners();
+    try {
+      calibreInstallation = await _bookConverter.detect(
+        customExecutable: customExecutable ?? settings.calibreExecutable,
+      );
+    } finally {
+      checkingCalibre = false;
+      notifyListeners();
+    }
   }
 
   Future<void> enqueue({
