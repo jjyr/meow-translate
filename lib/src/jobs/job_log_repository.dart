@@ -34,7 +34,7 @@ final class JobLogEntry {
       '[${level.name.toUpperCase()}] $message';
 }
 
-final class JobLogRepository {
+class JobLogRepository {
   JobLogRepository(this.paths);
 
   final AppPaths paths;

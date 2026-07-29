@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:meow_translate/src/ebook/ebook_codec.dart';
 import 'package:meow_translate/src/ebook/calibre_service.dart';
 import 'package:meow_translate/src/jobs/job_controller.dart';
+import 'package:meow_translate/src/jobs/job_log_repository.dart';
 import 'package:meow_translate/src/jobs/job_repository.dart';
 import 'package:meow_translate/src/jobs/output_file_allocator.dart';
 import 'package:meow_translate/src/jobs/translation_job.dart';
@@ -68,9 +69,12 @@ void main() {
 
   JobController createController({
     required _FakeSession session,
-    required TranslationEngine engine,
+    TranslationEngine? engine,
+    TranslationEngineFactory? translationEngineFactory,
     BookConverter? bookConverter,
+    JobLogRepository? jobLogRepository,
   }) {
+    assert(engine != null || translationEngineFactory != null);
     return JobController(
       paths: paths,
       settingsRepository: settingsRepository,
@@ -79,7 +83,8 @@ void main() {
       maximumConcurrentJobs: 1,
       codec: _FakeCodec(session),
       bookConverter: bookConverter ?? _FakeBookConverter(),
-      translationEngineFactory: (_) => engine,
+      jobLogRepository: jobLogRepository,
+      translationEngineFactory: translationEngineFactory ?? (_) => engine!,
     );
   }
 
@@ -183,6 +188,173 @@ void main() {
       expect(controller.jobById('job-1')?.failedUnitIds, isEmpty);
     },
   );
+
+  test('recreates the translation engine after a unit failure', () async {
+    final requestedUnitIds = <String>[];
+    final engines = <_SelectiveFailureEngine>[];
+    await jobRepository.save([_job(outputDirectory: outputDirectory)]);
+    final controller = createController(
+      session: _FakeSession(units: [_unit('unit-1'), _unit('unit-2')]),
+      translationEngineFactory: (_) {
+        final engine = _SelectiveFailureEngine(
+          failedUnitIds: engines.isEmpty ? const {'unit-1'} : const {},
+          requestedUnitIds: requestedUnitIds,
+        );
+        engines.add(engine);
+        return engine;
+      },
+    );
+
+    await controller.initialize();
+    await _waitUntil(
+      () =>
+          controller.jobById('job-1')?.status ==
+              TranslationJobStatus.waitingForAction &&
+          !controller.isJobRunning('job-1'),
+    );
+
+    expect(requestedUnitIds, ['unit-1', 'unit-2']);
+    expect(engines, hasLength(2));
+    expect(engines.first.closed, isTrue);
+    expect(controller.jobById('job-1')?.failedUnitIds, {'unit-1'});
+    expect(controller.jobById('job-1')?.completedUnitIds, {'unit-2'});
+  });
+
+  test('stops after consecutive translation engine failures', () async {
+    final requestedUnitIds = <String>[];
+    var engineCount = 0;
+    await jobRepository.save([_job(outputDirectory: outputDirectory)]);
+    final controller = createController(
+      session: _FakeSession(
+        units: [
+          _unit('unit-1'),
+          _unit('unit-2'),
+          _unit('unit-3'),
+          _unit('unit-4'),
+        ],
+      ),
+      translationEngineFactory: (_) {
+        engineCount++;
+        return _SelectiveFailureEngine(
+          failedUnitIds: const {'unit-1', 'unit-2', 'unit-3', 'unit-4'},
+          requestedUnitIds: requestedUnitIds,
+        );
+      },
+    );
+
+    await controller.initialize();
+    await _waitUntil(
+      () =>
+          controller.jobById('job-1')?.status ==
+              TranslationJobStatus.waitingForAction &&
+          !controller.isJobRunning('job-1'),
+    );
+
+    final failed = controller.jobById('job-1')!;
+    expect(requestedUnitIds, ['unit-1', 'unit-2']);
+    expect(engineCount, 2);
+    expect(failed.failedUnitIds, {'unit-1', 'unit-2'});
+    expect(failed.errorMessage, contains('repeated engine failures'));
+  });
+
+  test('successful units reset the consecutive failure breaker', () async {
+    final requestedUnitIds = <String>[];
+    await jobRepository.save([_job(outputDirectory: outputDirectory)]);
+    final controller = createController(
+      session: _FakeSession(
+        units: [
+          _unit('unit-1'),
+          _unit('unit-2'),
+          _unit('unit-3'),
+          _unit('unit-4'),
+        ],
+      ),
+      translationEngineFactory: (_) => _SelectiveFailureEngine(
+        failedUnitIds: const {'unit-1', 'unit-3'},
+        requestedUnitIds: requestedUnitIds,
+      ),
+    );
+
+    await controller.initialize();
+    await _waitUntil(
+      () =>
+          controller.jobById('job-1')?.status ==
+              TranslationJobStatus.waitingForAction &&
+          !controller.isJobRunning('job-1'),
+    );
+
+    expect(requestedUnitIds, ['unit-1', 'unit-2', 'unit-3', 'unit-4']);
+    expect(controller.jobById('job-1')?.failedUnitIds, {'unit-1', 'unit-3'});
+    expect(controller.jobById('job-1')?.completedUnitIds, {'unit-2', 'unit-4'});
+  });
+
+  test('a queued pause survives an in-flight preparation snapshot', () async {
+    final sourceAccessStarted = Completer<void>();
+    final allowSourceAccess = Completer<void>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(desktopChannel, (call) async {
+          switch (call.method) {
+            case 'startAccessingBookmark':
+              if (!sourceAccessStarted.isCompleted) {
+                sourceAccessStarted.complete();
+              }
+              await allowSourceAccess.future;
+              final arguments = call.arguments as Map<dynamic, dynamic>;
+              final bookmark = arguments['bookmark'] as String;
+              return {'token': 'token-$bookmark', 'path': bookmark};
+            case 'stopAccessingBookmark':
+            case 'notifyCompleted':
+              return null;
+            default:
+              throw PlatformException(
+                code: 'unexpected_method',
+                message: call.method,
+              );
+          }
+        });
+    final engine = _FakeEngine();
+    await jobRepository.save([_job(outputDirectory: outputDirectory)]);
+    final controller = createController(
+      session: _FakeSession(units: [_unit('unit-1')]),
+      engine: engine,
+    );
+
+    await controller.initialize();
+    await sourceAccessStarted.future;
+    expect(controller.jobById('job-1')?.status, TranslationJobStatus.queued);
+    await controller.pause('job-1');
+    allowSourceAccess.complete();
+    await _waitUntil(() => !controller.isJobRunning('job-1'));
+
+    expect(controller.jobById('job-1')?.status, TranslationJobStatus.paused);
+    expect(engine.requestedUnitIds, isEmpty);
+  });
+
+  test('job log failures do not block the failure state transition', () async {
+    final engine = _FakeEngine();
+    await jobRepository.save([_job(outputDirectory: outputDirectory)]);
+    final controller = createController(
+      session: _FakeSession(
+        units: [_unit('unit-1')],
+        repackError: StateError('simulated repack failure'),
+      ),
+      engine: engine,
+      jobLogRepository: _ThrowingJobLogRepository(paths),
+    );
+
+    await controller.initialize();
+    await _waitUntil(
+      () =>
+          controller.jobById('job-1')?.status ==
+              TranslationJobStatus.waitingForAction &&
+          !controller.isJobRunning('job-1'),
+    );
+
+    expect(
+      controller.jobById('job-1')?.errorMessage,
+      contains('simulated repack failure'),
+    );
+  });
 
   test('MOBI jobs convert input and preserve source output format', () async {
     final session = _FakeSession(units: [_unit('unit-1')]);
@@ -755,6 +927,54 @@ final class _FailOnceEngine implements TranslationEngine {
 
   @override
   void close() {}
+}
+
+final class _SelectiveFailureEngine implements TranslationEngine {
+  _SelectiveFailureEngine({
+    required this.failedUnitIds,
+    required this.requestedUnitIds,
+  });
+
+  final Set<String> failedUnitIds;
+  final List<String> requestedUnitIds;
+  bool closed = false;
+
+  @override
+  String get id => 'selective-failure';
+
+  @override
+  Stream<TranslationEvent> translate(TranslationRequest request) async* {
+    requestedUnitIds.add(request.unit.id);
+    if (failedUnitIds.contains(request.unit.id)) {
+      yield const TranslationFailed('simulated engine failure');
+      return;
+    }
+    yield TranslationCompleted(
+      TranslatedUnit(
+        unitId: request.unit.id,
+        text: 'translated ${request.unit.sourceText}',
+      ),
+    );
+  }
+
+  @override
+  void close() {
+    closed = true;
+  }
+}
+
+final class _ThrowingJobLogRepository extends JobLogRepository {
+  _ThrowingJobLogRepository(super.paths);
+
+  @override
+  Future<void> append(
+    String jobId,
+    String message, {
+    JobLogLevel level = JobLogLevel.info,
+    Iterable<String> secrets = const [],
+  }) async {
+    throw const FileSystemException('simulated read-only log directory');
+  }
 }
 
 final class _FakeBookConverter implements BookConverter {

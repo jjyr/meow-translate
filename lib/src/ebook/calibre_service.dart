@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:path/path.dart' as path;
+
 final class CalibreInstallation {
   const CalibreInstallation({required this.executable, required this.version});
 
@@ -67,25 +69,46 @@ final class CalibreService implements BookConverter {
       );
     }
     await output.parent.create(recursive: true);
-    if (await output.exists()) {
-      await output.delete();
-    }
-    final process = await Process.start(executable, [input.path, output.path]);
-    final stdoutFuture = process.stdout
-        .transform(const SystemEncoding().decoder)
-        .join();
-    final stderrFuture = process.stderr
-        .transform(const SystemEncoding().decoder)
-        .join();
-    final exitCode = await process.exitCode;
-    final stdout = await stdoutFuture;
-    final stderr = await stderrFuture;
-    if (exitCode != 0 || !await output.exists()) {
-      final details = stderr.trim().isNotEmpty ? stderr.trim() : stdout.trim();
-      throw BookConversionException(
-        'ebook-convert failed with exit code $exitCode'
-        '${details.isEmpty ? '.' : ': $details'}',
-      );
+    final temporaryOutput = File(
+      path.join(
+        output.parent.path,
+        '.${path.basenameWithoutExtension(output.path)}.'
+        '$pid-${DateTime.now().microsecondsSinceEpoch}.converting'
+        '${path.extension(output.path)}',
+      ),
+    );
+    try {
+      final process = await Process.start(executable, [
+        input.path,
+        temporaryOutput.path,
+      ]);
+      final stdoutFuture = process.stdout
+          .transform(const SystemEncoding().decoder)
+          .join();
+      final stderrFuture = process.stderr
+          .transform(const SystemEncoding().decoder)
+          .join();
+      final exitCode = await process.exitCode;
+      final stdout = await stdoutFuture;
+      final stderr = await stderrFuture;
+      if (exitCode != 0 || !await temporaryOutput.exists()) {
+        final details = stderr.trim().isNotEmpty
+            ? stderr.trim()
+            : stdout.trim();
+        throw BookConversionException(
+          'ebook-convert failed with exit code $exitCode'
+          '${details.isEmpty ? '.' : ': $details'}',
+        );
+      }
+
+      // The temporary file is a sibling of the destination, so this publish is
+      // an atomic rename on the destination filesystem.
+      await temporaryOutput.rename(output.path);
+    } on Object {
+      if (await temporaryOutput.exists()) {
+        await temporaryOutput.delete();
+      }
+      rethrow;
     }
   }
 }

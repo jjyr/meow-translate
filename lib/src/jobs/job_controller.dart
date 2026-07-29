@@ -58,6 +58,7 @@ final class JobController extends ChangeNotifier {
   final Set<String> _pauseRequested = {};
   final Map<String, TranslationCancellationToken> _cancellationTokens = {};
   final Random _random = Random.secure();
+  static const _maximumConsecutiveTranslationFailures = 2;
 
   AppSettings settings = AppSettings.defaults();
   List<TranslationJob> jobs = [];
@@ -222,6 +223,7 @@ final class JobController extends ChangeNotifier {
         job.status == TranslationJobStatus.abandoned) {
       return;
     }
+    _pauseRequested.add(jobId);
     if (job.status == TranslationJobStatus.queued) {
       await _replace(
         job.copyWith(status: TranslationJobStatus.paused, clearError: true),
@@ -229,7 +231,6 @@ final class JobController extends ChangeNotifier {
       await _log(jobId, 'Job paused while queued.');
       return;
     }
-    _pauseRequested.add(jobId);
     if (job.status == TranslationJobStatus.translating) {
       _cancellationTokens[jobId]?.cancel();
       await _log(jobId, 'Pause requested; cancelling the active translation.');
@@ -248,9 +249,11 @@ final class JobController extends ChangeNotifier {
       return;
     }
     _pauseRequested.remove(jobId);
-    await _replace(
+    final resumed = await _replace(
       job.copyWith(status: TranslationJobStatus.queued, clearError: true),
+      allowPausedTransition: true,
     );
+    if (!resumed) return;
     await _log(jobId, 'Job resumed.');
     _pump();
   }
@@ -265,7 +268,7 @@ final class JobController extends ChangeNotifier {
     }
     _pauseRequested.remove(jobId);
     await _deleteWorkspace(jobId);
-    await _replace(
+    final queued = await _replace(
       job.copyWith(
         status: TranslationJobStatus.queued,
         totalUnits: 0,
@@ -274,7 +277,9 @@ final class JobController extends ChangeNotifier {
         clearError: true,
         clearOutputPath: true,
       ),
+      allowPausedTransition: true,
     );
+    if (!queued) return;
     await _log(jobId, 'All previous translations were cleared.');
     _pump();
   }
@@ -423,7 +428,9 @@ final class JobController extends ChangeNotifier {
         return;
       }
       final modelSettings = settings.model(job.provider);
-      final engine = _translationEngineFactory(modelSettings);
+      TranslationEngine? engine;
+      var consecutiveFailures = 0;
+      var circuitBreakerOpened = false;
       try {
         await for (final unit in session.readTranslationUnits()) {
           job = jobById(jobId);
@@ -437,6 +444,7 @@ final class JobController extends ChangeNotifier {
           }
           await _log(jobId, 'Translating unit ${unit.id}.');
 
+          engine ??= _translationEngineFactory(modelSettings);
           TranslationCompleted? completed;
           TranslationFailed? failed;
           await for (final event in engine.translate(
@@ -474,9 +482,24 @@ final class JobController extends ChangeNotifier {
               'Unit ${unit.id} failed: $message',
               level: JobLogLevel.error,
             );
+            engine.close();
+            engine = null;
+            consecutiveFailures++;
+            if (consecutiveFailures >= _maximumConsecutiveTranslationFailures) {
+              circuitBreakerOpened = true;
+              await _log(
+                jobId,
+                'Translation stopped after $consecutiveFailures consecutive '
+                'engine failures. Retry the failed units after checking the '
+                'translation engine settings.',
+                level: JobLogLevel.warning,
+              );
+              break;
+            }
             continue;
           }
 
+          consecutiveFailures = 0;
           final translated = completed.unit;
           if (translated.unitId != unit.id) {
             throw StateError('The engine omitted translation unit ${unit.id}.');
@@ -497,7 +520,7 @@ final class JobController extends ChangeNotifier {
           await _log(jobId, 'Unit ${unit.id} translated successfully.');
         }
       } finally {
-        engine.close();
+        engine?.close();
       }
 
       job = jobById(jobId);
@@ -515,8 +538,11 @@ final class JobController extends ChangeNotifier {
         await _replace(
           job.copyWith(
             status: TranslationJobStatus.waitingForAction,
-            errorMessage:
-                '${job.failedUnitIds.length} translation unit(s) failed.',
+            errorMessage: circuitBreakerOpened
+                ? 'Translation stopped after repeated engine failures. '
+                      '${job.failedUnitIds.length} unit(s) failed; check the '
+                      'engine settings and retry the failed units.'
+                : '${job.failedUnitIds.length} translation unit(s) failed.',
           ),
         );
         return;
@@ -694,13 +720,13 @@ final class JobController extends ChangeNotifier {
       if (job != null &&
           job.status != TranslationJobStatus.abandoned &&
           job.status != TranslationJobStatus.paused) {
-        await _log(jobId, 'Job failed: $error', level: JobLogLevel.error);
         await _replace(
           job.copyWith(
             status: TranslationJobStatus.waitingForAction,
             errorMessage: error.toString(),
           ),
         );
+        await _log(jobId, 'Job failed: $error', level: JobLogLevel.error);
       }
     } finally {
       _cancellationTokens.remove(jobId);
@@ -714,7 +740,11 @@ final class JobController extends ChangeNotifier {
     final workspace = paths.workspaceFor(jobId);
     final manifest = File(path.join(workspace.path, 'epub-workspace.json'));
     if (await manifest.exists()) {
-      await _replace(job.copyWith(status: TranslationJobStatus.unpacking));
+      if (!await _replace(
+        job.copyWith(status: TranslationJobStatus.unpacking),
+      )) {
+        return null;
+      }
       await _log(jobId, 'Restoring the existing EPUB workspace.');
       return _codec.restore(workspace);
     }
@@ -751,9 +781,11 @@ final class JobController extends ChangeNotifier {
         await workspace.create(recursive: true);
         final intermediate = File(path.join(workspace.path, 'input.epub'));
         if (!await intermediate.exists()) {
-          await _replace(
+          if (!await _replace(
             job.copyWith(status: TranslationJobStatus.convertingInput),
-          );
+          )) {
+            return null;
+          }
           await _log(
             jobId,
             'Converting ${job.sourceFormat.name.toUpperCase()} input to EPUB.',
@@ -776,7 +808,11 @@ final class JobController extends ChangeNotifier {
 
       job = jobById(jobId);
       if (job == null) return null;
-      await _replace(job.copyWith(status: TranslationJobStatus.unpacking));
+      if (!await _replace(
+        job.copyWith(status: TranslationJobStatus.unpacking),
+      )) {
+        return null;
+      }
       await _log(jobId, 'Unpacking EPUB content.');
       final session = await _codec.unpack(epubInput, workspace: workspace);
       await _log(jobId, 'EPUB content unpacked.');
@@ -823,13 +859,17 @@ final class JobController extends ChangeNotifier {
     String message, {
     JobLogLevel level = JobLogLevel.info,
   }) async {
-    await jobLogRepository.append(
-      jobId,
-      message,
-      level: level,
-      secrets: settings.models.values.map((model) => model.apiKey),
-    );
-    notifyListeners();
+    try {
+      await jobLogRepository.append(
+        jobId,
+        message,
+        level: level,
+        secrets: settings.models.values.map((model) => model.apiKey),
+      );
+      notifyListeners();
+    } on Object catch (error) {
+      debugPrint('Unable to append job log for $jobId: $error');
+    }
   }
 
   Future<SecurityScopedAccess> _startRequiredAccess(
@@ -980,7 +1020,10 @@ final class JobController extends ChangeNotifier {
     }
   }
 
-  Future<bool> _replace(TranslationJob updated) async {
+  Future<bool> _replace(
+    TranslationJob updated, {
+    bool allowPausedTransition = false,
+  }) async {
     final index = jobs.indexWhere((job) => job.id == updated.id);
     if (index < 0) {
       return false;
@@ -988,6 +1031,12 @@ final class JobController extends ChangeNotifier {
     final current = jobs[index];
     if (current.status == TranslationJobStatus.abandoned &&
         updated.status != TranslationJobStatus.abandoned) {
+      return false;
+    }
+    if (current.status == TranslationJobStatus.paused &&
+        updated.status != TranslationJobStatus.paused &&
+        updated.status != TranslationJobStatus.abandoned &&
+        !allowPausedTransition) {
       return false;
     }
     jobs[index] = updated;

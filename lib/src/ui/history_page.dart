@@ -106,8 +106,12 @@ final class _JobCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                _JobActions(job: job, controller: controller),
               ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: _JobActions(job: job, controller: controller),
             ),
             if (job.totalUnits > 0 &&
                 job.status != TranslationJobStatus.completed) ...[
@@ -279,7 +283,12 @@ final class _JobActions extends StatelessWidget {
         ),
       ]);
     }
-    return Wrap(spacing: 8, runSpacing: 8, children: actions);
+    return Wrap(
+      alignment: WrapAlignment.end,
+      spacing: 8,
+      runSpacing: 8,
+      children: actions,
+    );
   }
 
   Future<void> _confirmRetranslateAll(BuildContext context) async {

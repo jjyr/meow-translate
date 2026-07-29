@@ -50,5 +50,74 @@ cp "\$1" "\$2"
     );
 
     expect(await output.readAsString(), 'book payload');
+    expect(
+      temporaryDirectory
+          .listSync()
+          .whereType<File>()
+          .map((file) => file.path)
+          .where((filePath) => filePath.contains('.converting.')),
+      isEmpty,
+    );
   });
+
+  test(
+    'failed conversion removes the partial file and preserves existing output',
+    () async {
+      const service = CalibreService();
+      final input = File('${temporaryDirectory.path}/book.mobi');
+      final output = File('${temporaryDirectory.path}/book.epub');
+      await input.writeAsString('book payload');
+      await output.writeAsString('previous valid output');
+      await executable.writeAsString('''
+#!/bin/sh
+echo "partial conversion" > "\$2"
+echo "simulated failure" >&2
+exit 7
+''');
+
+      await expectLater(
+        service.convert(
+          executable: executable.path,
+          input: input,
+          output: output,
+        ),
+        throwsA(
+          isA<BookConversionException>().having(
+            (error) => error.message,
+            'message',
+            contains('simulated failure'),
+          ),
+        ),
+      );
+
+      expect(await output.readAsString(), 'previous valid output');
+      expect(
+        temporaryDirectory
+            .listSync()
+            .whereType<File>()
+            .map((file) => file.path)
+            .where((filePath) => filePath.contains('.converting.')),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'successful conversion atomically replaces an existing output',
+    () async {
+      const service = CalibreService();
+      final input = File('${temporaryDirectory.path}/book.mobi');
+      final output = File('${temporaryDirectory.path}/book.epub');
+      await input.writeAsString('new payload');
+      await output.writeAsString('old payload');
+
+      await service.convert(
+        executable: executable.path,
+        input: input,
+        output: output,
+      );
+
+      expect(await output.readAsString(), 'new payload');
+    },
+  );
 }
