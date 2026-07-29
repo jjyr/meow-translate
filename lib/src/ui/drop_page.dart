@@ -186,6 +186,7 @@ final class _DropPageState extends State<DropPage> {
         sourcePaths: epubPaths,
         outputDirectory: options.outputDirectory,
         targetLanguage: options.targetLanguage,
+        keepOriginal: options.keepOriginal,
         provider: options.provider,
       );
     } on Object catch (error) {

@@ -77,6 +77,7 @@ TranslationJob _job(String id) => TranslationJob(
   outputDirectory: '/output',
   outputDirectoryBookmark: 'output-bookmark',
   targetLanguage: 'English',
+  keepOriginal: false,
   provider: TranslationProvider.deepseek,
   createdAt: DateTime.utc(2026),
   status: TranslationJobStatus.queued,

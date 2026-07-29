@@ -9,6 +9,7 @@ void main() {
     expect(json['provider'], 'codex');
     expect(json['source_bookmark'], 'source-bookmark');
     expect(json['output_directory_bookmark'], 'output-bookmark');
+    expect(json['keep_original'], isTrue);
     expect(json.toString(), isNot(contains('api_key')));
     expect(json.toString(), isNot(contains('secret')));
   });
@@ -35,6 +36,12 @@ void main() {
       expect(persisted.containsKey('model_settings'), isFalse);
     },
   );
+
+  test('legacy jobs default to translated-only output', () {
+    final legacy = _job().toJson()..remove('keep_original');
+
+    expect(TranslationJob.fromJson(legacy).keepOriginal, isFalse);
+  });
 }
 
 TranslationJob _job() => TranslationJob(
@@ -44,6 +51,7 @@ TranslationJob _job() => TranslationJob(
   outputDirectory: '/output',
   outputDirectoryBookmark: 'output-bookmark',
   targetLanguage: 'Simplified Chinese',
+  keepOriginal: true,
   provider: TranslationProvider.codex,
   createdAt: DateTime.utc(2026),
   status: TranslationJobStatus.queued,

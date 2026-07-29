@@ -37,6 +37,7 @@ final class TranslationJob {
     required this.outputDirectory,
     required this.outputDirectoryBookmark,
     required this.targetLanguage,
+    required this.keepOriginal,
     required this.provider,
     required this.createdAt,
     required this.status,
@@ -54,6 +55,7 @@ final class TranslationJob {
     outputDirectory: json['output_directory'] as String,
     outputDirectoryBookmark: json['output_directory_bookmark'] as String? ?? '',
     targetLanguage: json['target_language'] as String,
+    keepOriginal: json['keep_original'] as bool? ?? false,
     provider: _providerFromJson(json),
     createdAt: DateTime.parse(json['created_at'] as String),
     status: TranslationJobStatus.values.byName(json['status'] as String),
@@ -74,6 +76,7 @@ final class TranslationJob {
   final String outputDirectory;
   final String outputDirectoryBookmark;
   final String targetLanguage;
+  final bool keepOriginal;
   final TranslationProvider provider;
   final DateTime createdAt;
   final TranslationJobStatus status;
@@ -93,6 +96,7 @@ final class TranslationJob {
     String? sourceBookmark,
     String? outputDirectory,
     String? outputDirectoryBookmark,
+    bool? keepOriginal,
     TranslationJobStatus? status,
     int? totalUnits,
     Set<String>? completedUnitIds,
@@ -109,6 +113,7 @@ final class TranslationJob {
     outputDirectoryBookmark:
         outputDirectoryBookmark ?? this.outputDirectoryBookmark,
     targetLanguage: targetLanguage,
+    keepOriginal: keepOriginal ?? this.keepOriginal,
     provider: provider,
     createdAt: createdAt,
     status: status ?? this.status,
@@ -126,6 +131,7 @@ final class TranslationJob {
     'output_directory': outputDirectory,
     'output_directory_bookmark': outputDirectoryBookmark,
     'target_language': targetLanguage,
+    'keep_original': keepOriginal,
     'provider': provider.name,
     'created_at': createdAt.toIso8601String(),
     'status': status.name,

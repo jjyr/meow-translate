@@ -8,16 +8,20 @@ final class OperationOptions {
   const OperationOptions({
     required this.outputDirectory,
     required this.targetLanguage,
+    required this.keepOriginal,
     required this.provider,
   });
 
   final String outputDirectory;
   final String targetLanguage;
+  final bool keepOriginal;
   final TranslationProvider provider;
 }
 
 String rememberedOutputDirectory(AppSettings settings) =>
     settings.outputDirectoryBookmark.isEmpty ? '' : settings.outputDirectory;
+
+bool rememberedKeepOriginal(AppSettings settings) => settings.keepOriginal;
 
 Future<OperationOptions?> showOperationSheet({
   required BuildContext context,
@@ -48,6 +52,7 @@ final class _OperationSheetContent extends StatefulWidget {
 final class _OperationSheetContentState extends State<_OperationSheetContent> {
   late final TextEditingController _outputController;
   late String _targetLanguage;
+  late bool _keepOriginal;
   late TranslationProvider _provider;
   late bool _requiresOutputReselection;
 
@@ -72,6 +77,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
         widget.settings.outputDirectory.isNotEmpty &&
         widget.settings.outputDirectoryBookmark.isEmpty;
     _targetLanguage = widget.settings.targetLanguage;
+    _keepOriginal = rememberedKeepOriginal(widget.settings);
     _provider = widget.settings.lastProvider;
   }
 
@@ -174,6 +180,24 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
             ),
             const SizedBox(height: 14),
             _LabeledControl(
+              label: 'Bilingual output',
+              child: Row(
+                children: [
+                  MacosCheckbox(
+                    value: _keepOriginal,
+                    onChanged: (value) {
+                      setState(() => _keepOriginal = value);
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text('Keep original text above the translation'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            _LabeledControl(
               label: 'Model',
               child: MacosPopupButton<TranslationProvider>(
                 value: _provider,
@@ -211,6 +235,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
                           OperationOptions(
                             outputDirectory: _outputController.text,
                             targetLanguage: _targetLanguage,
+                            keepOriginal: _keepOriginal,
                             provider: _provider,
                           ),
                         ),

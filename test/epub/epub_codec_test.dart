@@ -125,6 +125,67 @@ void main() {
     expect(translatedChapter, contains('<em data-mark="yes">世界</em>'));
   });
 
+  test(
+    'bilingual repack keeps the original block before an id-free clone',
+    () async {
+      const originalBlock =
+          '<p id="p1" class="lead">Hello '
+          '<em id="em1" data-mark="yes"><span xml:id="word">world</span></em>.'
+          '</p>';
+      const translatedBlock =
+          '<p class="lead">你好 '
+          '<em data-mark="yes"><span>世界</span></em>。</p>';
+      source = await createEpubFixture(
+        temporaryDirectory,
+        chapter: fixtureChapter.replaceFirst(
+          '<p id="p1">Hello <em data-mark="yes">world</em>.</p>',
+          originalBlock,
+        ),
+      );
+      final original = readArchiveSnapshot(source);
+      final session = await codec.unpack(
+        source,
+        workspace: Directory('${temporaryDirectory.path}/workspace'),
+      );
+      final paragraph = (await session.readTranslationUnits().toList())
+          .singleWhere((unit) => unit.kind == 'p');
+      await session.saveTranslation(
+        paragraph,
+        TranslatedUnit(
+          unitId: paragraph.id,
+          fragments: {
+            for (final fragment in paragraph.fragments)
+              fragment.id: switch (fragment.sourceText) {
+                'Hello ' => '你好 ',
+                'world' => '世界',
+                '.' => '。',
+                final value => value,
+              },
+          },
+        ),
+      );
+
+      final output = File('${temporaryDirectory.path}/bilingual.epub');
+      await session.repack(output, keepOriginal: true);
+      final repacked = readArchiveSnapshot(output);
+      final chapter = utf8.decode(repacked.entries[fixtureChapterPath]!);
+
+      expect(chapter, contains('$originalBlock\n$translatedBlock'));
+      expect(chapter.split(originalBlock), hasLength(2));
+      expect(chapter.split(translatedBlock), hasLength(2));
+      for (final entry in original.entries.entries) {
+        if (entry.key == fixtureChapterPath) {
+          continue;
+        }
+        expect(
+          repacked.entries[entry.key],
+          entry.value,
+          reason: 'Untouched entry ${entry.key} changed.',
+        );
+      }
+    },
+  );
+
   test('translated repack does not double-escape named entities', () async {
     source = await createEpubFixture(
       temporaryDirectory,

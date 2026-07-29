@@ -94,7 +94,8 @@ final class _JobCard extends StatelessWidget {
                       const SizedBox(height: 3),
                       Text(
                         '${job.status.label} · ${job.provider.label}'
-                        ' · ${job.targetLanguage}',
+                        ' · ${job.targetLanguage}'
+                        '${job.keepOriginal ? ' · Bilingual' : ''}',
                         style: theme.typography.subheadline,
                       ),
                     ],

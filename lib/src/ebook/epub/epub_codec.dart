@@ -387,9 +387,12 @@ final class EpubSession implements EbookSession {
   }
 
   @override
-  Future<File> repack(File output) async {
+  Future<File> repack(File output, {bool keepOriginal = false}) async {
     final translations = await _readTranslations();
-    final patchedFiles = await _materializePatches(translations);
+    final patchedFiles = await _materializePatches(
+      translations,
+      keepOriginal: keepOriginal,
+    );
     await output.parent.create(recursive: true);
 
     final outputStream = OutputFileStream(output.path);
@@ -532,8 +535,9 @@ final class EpubSession implements EbookSession {
   }
 
   Future<Map<String, File>> _materializePatches(
-    Map<String, _StoredTranslation> translations,
-  ) async {
+    Map<String, _StoredTranslation> translations, {
+    required bool keepOriginal,
+  }) async {
     if (translations.isEmpty) {
       return {};
     }
@@ -551,20 +555,22 @@ final class EpubSession implements EbookSession {
         EpubCodec._entryFilePath(_contentDirectory, resourceEntry.key),
       );
       var source = await original.readAsString();
-      final units = {
-        for (final unit in _segmenter.segment(resourceEntry.key, source))
-          unit.id: unit,
+      final blocks = {
+        for (final block in _segmenter.segmentBlocks(resourceEntry.key, source))
+          block.unit.id: block,
       };
       final replacements = <_TextReplacement>[];
 
       for (final translation in resourceEntry.value) {
-        final unit = units[translation.unitId];
-        if (unit == null) {
+        final block = blocks[translation.unitId];
+        if (block == null) {
           throw EbookCodecException(
             'Translation unit ${translation.unitId} no longer matches '
             '${translation.resourcePath}.',
           );
         }
+        final unit = block.unit;
+        final translatedFragments = <_TextReplacement>[];
         for (final fragment in unit.fragments) {
           final translatedText = translation.fragments[fragment.id];
           if (translatedText == null) {
@@ -586,13 +592,42 @@ final class EpubSession implements EbookSession {
               '${translation.resourcePath}.',
             );
           }
-          replacements.add(
+          translatedFragments.add(
             _TextReplacement(
-              start: fragment.startOffset,
-              end: fragment.endOffset,
+              start: keepOriginal
+                  ? fragment.startOffset - block.startOffset
+                  : fragment.startOffset,
+              end: keepOriginal
+                  ? fragment.endOffset - block.startOffset
+                  : fragment.endOffset,
               value: encodeXmlText(translatedText),
             ),
           );
+        }
+        if (keepOriginal) {
+          var translatedBlock = source.substring(
+            block.startOffset,
+            block.endOffset,
+          );
+          translatedFragments.sort(
+            (left, right) => right.start.compareTo(left.start),
+          );
+          for (final replacement in translatedFragments) {
+            translatedBlock = translatedBlock.replaceRange(
+              replacement.start,
+              replacement.end,
+              replacement.value,
+            );
+          }
+          replacements.add(
+            _TextReplacement(
+              start: block.endOffset,
+              end: block.endOffset,
+              value: '\n${stripXmlIdentifiers(translatedBlock)}',
+            ),
+          );
+        } else {
+          replacements.addAll(translatedFragments);
         }
       }
 

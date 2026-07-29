@@ -14,7 +14,8 @@ rebuilds a new EPUB without changing the source package in place.
 ## Current capabilities
 
 - Drag and drop one or more EPUB files.
-- Remember the output directory, target language, and model provider.
+- Remember the output directory, target language, model provider, and whether
+  to keep the original text above each translation.
 - Run multiple persistent jobs with progress and failure history.
 - Retry unfinished translation units or abandon a job.
 - Restore sandbox file access across launches with security-scoped bookmarks.
@@ -22,8 +23,9 @@ rebuilds a new EPUB without changing the source package in place.
   cancellation and bounded timeouts.
 - Store model configuration, including API keys, in a plain JSON file.
 - Notify on completion and reveal the output in Finder.
-- Preserve EPUB paths, package identifiers, element identifiers, attributes,
-  links, styles, and non-text resources.
+- Preserve EPUB paths, package identifiers, original element identifiers,
+  attributes, links, styles, and non-text resources. Bilingual translated
+  clones omit `id` and `xml:id` attributes to avoid duplicate identifiers.
 - Verify no-op EPUB round trips against both generated fixtures and opt-in real
   books.
 

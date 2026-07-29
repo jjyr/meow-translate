@@ -87,6 +87,7 @@ final class AppSettings {
     required this.outputDirectory,
     required this.outputDirectoryBookmark,
     required this.targetLanguage,
+    required this.keepOriginal,
     required this.lastProvider,
     required this.models,
   });
@@ -95,6 +96,7 @@ final class AppSettings {
     outputDirectory: '',
     outputDirectoryBookmark: '',
     targetLanguage: 'Simplified Chinese',
+    keepOriginal: false,
     lastProvider: TranslationProvider.deepseek,
     models: {
       for (final provider in TranslationProvider.values)
@@ -120,6 +122,7 @@ final class AppSettings {
           json['output_directory_bookmark'] as String? ?? '',
       targetLanguage:
           json['target_language'] as String? ?? defaults.targetLanguage,
+      keepOriginal: json['keep_original'] as bool? ?? defaults.keepOriginal,
       lastProvider: TranslationProvider.values.byName(
         json['last_provider'] as String? ?? defaults.lastProvider.name,
       ),
@@ -130,6 +133,7 @@ final class AppSettings {
   final String outputDirectory;
   final String outputDirectoryBookmark;
   final String targetLanguage;
+  final bool keepOriginal;
   final TranslationProvider lastProvider;
   final Map<TranslationProvider, ModelSettings> models;
 
@@ -140,6 +144,7 @@ final class AppSettings {
     String? outputDirectory,
     String? outputDirectoryBookmark,
     String? targetLanguage,
+    bool? keepOriginal,
     TranslationProvider? lastProvider,
     Map<TranslationProvider, ModelSettings>? models,
   }) => AppSettings(
@@ -147,6 +152,7 @@ final class AppSettings {
     outputDirectoryBookmark:
         outputDirectoryBookmark ?? this.outputDirectoryBookmark,
     targetLanguage: targetLanguage ?? this.targetLanguage,
+    keepOriginal: keepOriginal ?? this.keepOriginal,
     lastProvider: lastProvider ?? this.lastProvider,
     models: models ?? this.models,
   );
@@ -155,10 +161,11 @@ final class AppSettings {
       copyWith(models: {...models, modelSettings.provider: modelSettings});
 
   Map<String, Object> toJson() => {
-    'version': 1,
+    'version': 2,
     'output_directory': outputDirectory,
     'output_directory_bookmark': outputDirectoryBookmark,
     'target_language': targetLanguage,
+    'keep_original': keepOriginal,
     'last_provider': lastProvider.name,
     'models': {
       for (final entry in models.entries) entry.key.name: entry.value.toJson(),

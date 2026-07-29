@@ -18,6 +18,7 @@ The generated EPUB fixture covers:
 - workspace restoration;
 - no-op repacking;
 - translated text replacement;
+- bilingual original-block preservation and identifier-free translated clones;
 - named XHTML entity decoding without double-escaping;
 - untouched binary resource preservation;
 - `mimetype` order and compression;

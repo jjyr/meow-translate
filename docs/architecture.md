@@ -50,6 +50,12 @@ original XHTML, checks every source hash, XML-escapes translated text, and
 applies replacements from the highest offset to the lowest. Replacements
 therefore cannot shift offsets that have not been applied yet.
 
+For bilingual output, the repacker leaves each original XHTML block
+byte-for-byte unchanged and inserts its translated clone immediately after it.
+Inline markup and non-identifier attributes remain intact. The clone omits
+`id` and `xml:id` attributes from its root and descendants so the document
+does not contain duplicate element identifiers.
+
 The repacker always emits `mimetype` first with no compression. Every untouched
 entry is copied from its unpacked payload. OPF IDs, XHTML IDs, attributes,
 links, media paths, CSS, fonts, and images are not regenerated.
@@ -84,9 +90,9 @@ is validated before it reaches the EPUB session.
 ## Jobs and recovery
 
 Each source file creates one `TranslationJob` with a unique workspace. Jobs
-persist total, completed, and failed unit identifiers. A successful unit is
-flushed to the translation transcript and job history before the next unit
-starts.
+persist total, completed, and failed unit identifiers together with the
+selected output mode. A successful unit is flushed to the translation
+transcript and job history before the next unit starts.
 
 ```text
 queued -> unpacking -> translating -> repacking -> completed
@@ -141,9 +147,11 @@ the user to choose the folder again.
 
 ## Storage
 
-- `config.json`: last-used options and provider configuration.
+- `config.json`: last-used options, bilingual output preference, and provider
+  configuration.
 - `jobs.json`: provider, security-scoped bookmarks, persistent job history,
-  and unit states. It never contains API keys or model configuration.
+  output mode, and unit states. It never contains API keys or model
+  configuration.
 - `workspaces/<job-id>`: persistent in-progress source copy, unpacked entries,
   manifest, transcript, and patched XHTML. Removed at terminal completion or
   abandonment.

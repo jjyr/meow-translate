@@ -88,6 +88,7 @@ void main() {
           outputDirectory: outputDirectory,
           totalUnits: 2,
           completedUnitIds: const {'unit-1'},
+          keepOriginal: true,
         ),
       ]);
       final controller = createController(session: session, engine: engine);
@@ -104,6 +105,7 @@ void main() {
       expect(engine.requestedUnitIds, ['unit-1', 'unit-2']);
       expect(completed.completedUnitIds, {'unit-1', 'unit-2'});
       expect(await File(completed.outputPath!).readAsString(), 'unit-1,unit-2');
+      expect(session.repackKeepOriginal, isTrue);
       expect(await paths.workspaceFor('job-1').exists(), isFalse);
       expect(
         paths.workspacesDirectory.path,
@@ -332,6 +334,7 @@ TranslationJob _job({
   required Directory outputDirectory,
   int totalUnits = 0,
   Set<String> completedUnitIds = const {},
+  bool keepOriginal = false,
 }) => TranslationJob(
   id: 'job-1',
   sourcePath: '/books/book.epub',
@@ -339,6 +342,7 @@ TranslationJob _job({
   outputDirectory: outputDirectory.path,
   outputDirectoryBookmark: outputDirectory.path,
   targetLanguage: 'English',
+  keepOriginal: keepOriginal,
   provider: TranslationProvider.deepseek,
   createdAt: DateTime.utc(2026),
   status: TranslationJobStatus.queued,
@@ -432,6 +436,7 @@ final class _FakeSession implements EbookSession {
   final Completer<void>? allowRepack;
   final Object? repackError;
   final List<String> savedUnitIds = [];
+  bool? repackKeepOriginal;
   Directory currentWorkspace = Directory.systemTemp;
 
   @override
@@ -468,7 +473,8 @@ final class _FakeSession implements EbookSession {
   }
 
   @override
-  Future<File> repack(File output) async {
+  Future<File> repack(File output, {bool keepOriginal = false}) async {
+    repackKeepOriginal = keepOriginal;
     if (repackStarted != null && !repackStarted!.isCompleted) {
       repackStarted!.complete();
     }

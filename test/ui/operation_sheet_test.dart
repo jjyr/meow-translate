@@ -19,4 +19,10 @@ void main() {
 
     expect(rememberedOutputDirectory(settings), '/bookmarked/output');
   });
+
+  test('bilingual output uses the remembered setting', () {
+    final settings = AppSettings.defaults().copyWith(keepOriginal: true);
+
+    expect(rememberedKeepOriginal(settings), isTrue);
+  });
 }

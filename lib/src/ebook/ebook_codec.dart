@@ -26,7 +26,7 @@ abstract interface class EbookSession {
     TranslatedUnit translation,
   );
 
-  Future<File> repack(File output);
+  Future<File> repack(File output, {bool keepOriginal = false});
 }
 
 final class EbookPackageInfo {

@@ -114,6 +114,7 @@ final class JobController extends ChangeNotifier {
     required List<String> sourcePaths,
     required String outputDirectory,
     required String targetLanguage,
+    required bool keepOriginal,
     required TranslationProvider provider,
   }) async {
     final outputBookmark =
@@ -143,6 +144,7 @@ final class JobController extends ChangeNotifier {
           outputDirectory: outputDirectory,
           outputDirectoryBookmark: outputBookmark,
           targetLanguage: targetLanguage,
+          keepOriginal: keepOriginal,
           provider: provider,
           createdAt: now,
           status: TranslationJobStatus.queued,
@@ -157,6 +159,7 @@ final class JobController extends ChangeNotifier {
         outputDirectory: outputDirectory,
         outputDirectoryBookmark: outputBookmark,
         targetLanguage: targetLanguage,
+        keepOriginal: keepOriginal,
         lastProvider: provider,
       ),
     );
@@ -481,7 +484,10 @@ final class JobController extends ChangeNotifier {
           await _cancelOutputReservation(jobId, reservation);
           return;
         }
-        await session.repack(reservation.staging);
+        await session.repack(
+          reservation.staging,
+          keepOriginal: job.keepOriginal,
+        );
         if (await _stopIfAbandoned(jobId)) {
           await _cancelOutputReservation(jobId, reservation);
           return;

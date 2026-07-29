@@ -50,4 +50,29 @@ void main() {
     expect(unit.sourceText, 'One\u00a0thing © 2026');
     expect(encodeXmlText(unit.sourceText), isNot(contains('&amp;nbsp;')));
   });
+
+  test('reports the complete containing block range', () {
+    const source = '<body><p id="p1">Hello <em>world</em>.</p></body>';
+
+    final block = segmenter.segmentBlocks('chapter.xhtml', source).single;
+
+    expect(
+      source.substring(block.startOffset, block.endOffset),
+      '<p id="p1">Hello <em>world</em>.</p>',
+    );
+    expect(block.unit.sourceText, 'Hello world.');
+  });
+
+  test('strips only id attributes from translated markup', () {
+    const source =
+        '<p id="p1" data-id="kept" title="quoted id=\'also-kept\'">'
+        'Text id="text" '
+        '<em xml:id=\'inline\'>here</em></p>';
+
+    expect(
+      stripXmlIdentifiers(source),
+      '<p data-id="kept" title="quoted id=\'also-kept\'">'
+      'Text id="text" <em>here</em></p>',
+    );
+  });
 }
