@@ -50,7 +50,7 @@ central directory and compression streams are generated.
 ## Build verification
 
 ```sh
-mise run build
+mise run build:mac
 ```
 
 This checks plugin registration, macOS entitlements, CocoaPods integration, and

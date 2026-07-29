@@ -49,7 +49,7 @@ mise run run
 To build the application:
 
 ```sh
-mise run build
+mise run build:mac
 ```
 
 ## Real EPUB integration test

@@ -33,6 +33,10 @@ run = "flutter run -d macos"
 description = "Build the macOS application"
 run = "flutter build macos"
 
+[tasks."build:mac"]
+description = "Build the macOS Release application bundle"
+run = "flutter build macos --release"
+
 [tasks.check]
 description = "Run all deterministic verification"
 run = [
