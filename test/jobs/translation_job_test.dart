@@ -29,6 +29,7 @@ TranslationJob _job() => TranslationJob(
   outputDirectoryBookmark: 'output-bookmark',
   targetLanguage: 'Simplified Chinese',
   keepOriginal: true,
+  preserveSourceFormat: false,
   provider: TranslationProvider.codexCli,
   createdAt: DateTime.utc(2026),
   status: TranslationJobStatus.queued,

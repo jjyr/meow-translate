@@ -13,11 +13,14 @@ whole-book translation request or keeps all translated text in memory.
 flowchart LR
     UI["macOS UI"] --> Jobs["JobController"]
     Jobs --> Codec["EbookCodec / EbookSession"]
+    Jobs --> Converter["Calibre ebook-convert"]
     Jobs --> Engine["TranslationEngine"]
     Codec --> Workspace["Per-job workspace"]
     Engine --> DeepSeek["DeepSeek Chat API"]
-    Engine --> Codex["OpenAI Responses API"]
+    Engine --> Compatible["OpenAI-compatible API"]
+    Engine --> Codex["Codex CLI"]
     Jobs --> History["Persistent job history"]
+    Jobs --> Logs["Persistent redacted logs"]
 ```
 
 ## Ebook codec boundary
@@ -25,6 +28,12 @@ flowchart LR
 `EbookCodec` owns format recognition, unpacking, and workspace restoration.
 `EbookSession` exposes a stream of semantic `TranslationUnit` values, records
 completed translations, and repacks the output.
+
+EPUB is the canonical editable format. DRM-free MOBI and AZW3 input is
+converted to an intermediate EPUB with Calibre's local `ebook-convert`
+executable. The result can remain EPUB or be converted back to the source
+format. Intermediate files remain in the per-job workspace and source files
+are never modified.
 
 No API assumes that an ebook has stable pages. A unit is normally a paragraph,
 heading, list item, table cell, or other block-level element. The model receives
@@ -100,17 +109,27 @@ selected output mode. A successful unit is flushed to the translation
 transcript and job history before the next unit starts.
 
 ```text
-queued -> unpacking -> translating -> repacking -> completed
+queued -> convertingInput -> unpacking -> translating -> repacking
+  ^                                          |             |
+  |                                          v             v
+paused <------------------------------- pause boundary  convertingOutput
+  |                                                        |
+  +------------------------ resume -------------------------+-> completed
+
+translating -> waitingForAction -> retry failed units -> queued
                          |
-                         +-> waitingForAction -> queued
-                                      |
-                                      +-> abandoned
+                         +-> retranslate all -> queued
+                         |
+                         +-> abandoned
 ```
 
 If the app closes during work, the job is restored as `waitingForAction`.
-Retrying reopens the existing workspace, skips completed units, and uses the
-current configuration for the same provider. Abandoning removes the temporary
-workspace after in-flight work stops.
+Retrying failed units reopens the existing workspace, skips completed units,
+and uses the current configuration for the same provider. Pausing cancels an
+active HTTP request or Codex CLI process; conversion and repacking stop at the
+next safe phase boundary. Paused jobs remain paused across launches.
+Retranslate-all removes the prior transcript and workspace. Abandoning removes
+the temporary workspace after in-flight work stops.
 
 Active workspaces live in Application Support rather than the purgeable cache.
 If a workspace is nevertheless missing or damaged, Meow clears all persisted
@@ -160,6 +179,8 @@ the user to choose the folder again.
 - `workspaces/<job-id>`: persistent in-progress source copy, unpacked entries,
   manifest, transcript, and patched XHTML. Removed at terminal completion or
   abandonment.
+- `logs/<job-id>.jsonl`: persistent lifecycle log. It excludes source content
+  and redacts configured API keys and bearer credentials.
 
 Configuration and job files are written atomically with mode `0600` on macOS
 and Linux. Job writes are serialized from immutable snapshots so concurrent

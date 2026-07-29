@@ -96,4 +96,22 @@ void main() {
     expect(await second.output.readAsString(), 'job b output');
     await second.releaseOwnership();
   });
+
+  test('reserves output using a requested ebook extension', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'meow-output-extension-test-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+
+    final reservation = await const OutputFileAllocator().reserve(
+      directory: directory,
+      sourcePath: '/books/book.mobi',
+      targetLanguage: 'French',
+      jobId: 'job-mobi',
+      outputExtension: '.mobi',
+    );
+
+    expect(reservation.output.path, endsWith('.mobi'));
+    await reservation.cancel();
+  });
 }

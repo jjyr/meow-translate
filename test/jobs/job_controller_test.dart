@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meow_translate/src/ebook/ebook_codec.dart';
+import 'package:meow_translate/src/ebook/calibre_service.dart';
 import 'package:meow_translate/src/jobs/job_controller.dart';
 import 'package:meow_translate/src/jobs/job_repository.dart';
 import 'package:meow_translate/src/jobs/output_file_allocator.dart';
@@ -67,7 +68,8 @@ void main() {
 
   JobController createController({
     required _FakeSession session,
-    required _FakeEngine engine,
+    required TranslationEngine engine,
+    BookConverter? bookConverter,
   }) {
     return JobController(
       paths: paths,
@@ -76,6 +78,7 @@ void main() {
       desktopServices: DesktopServices(),
       maximumConcurrentJobs: 1,
       codec: _FakeCodec(session),
+      bookConverter: bookConverter ?? _FakeBookConverter(),
       translationEngineFactory: (_) => engine,
     );
   }
@@ -113,6 +116,181 @@ void main() {
         paths.workspacesDirectory.path,
         startsWith(paths.supportDirectory.path),
       );
+    },
+  );
+
+  test(
+    'pause cancels the active unit and resume skips no completed work',
+    () async {
+      final session = _FakeSession(units: [_unit('unit-1'), _unit('unit-2')]);
+      final engine = _PauseOnceEngine();
+      await jobRepository.save([_job(outputDirectory: outputDirectory)]);
+      final controller = createController(session: session, engine: engine);
+
+      await controller.initialize();
+      await engine.firstRequestStarted.future;
+      await controller.pause('job-1');
+      await _waitUntil(
+        () =>
+            controller.jobById('job-1')?.status == TranslationJobStatus.paused,
+      );
+
+      expect(controller.jobById('job-1')?.completedUnitIds, isEmpty);
+
+      await controller.resume('job-1');
+      await _waitUntil(
+        () =>
+            controller.jobById('job-1')?.status ==
+                TranslationJobStatus.completed &&
+            !controller.isJobRunning('job-1'),
+      );
+
+      expect(engine.requestedUnitIds, ['unit-1', 'unit-1', 'unit-2']);
+      expect(controller.jobById('job-1')?.completedUnitIds, {
+        'unit-1',
+        'unit-2',
+      });
+    },
+  );
+
+  test(
+    'retry processes only failed units and preserves successful units',
+    () async {
+      final session = _FakeSession(units: [_unit('unit-1'), _unit('unit-2')]);
+      final engine = _FailOnceEngine('unit-1');
+      await jobRepository.save([_job(outputDirectory: outputDirectory)]);
+      final controller = createController(session: session, engine: engine);
+
+      await controller.initialize();
+      await _waitUntil(
+        () =>
+            controller.jobById('job-1')?.status ==
+            TranslationJobStatus.waitingForAction,
+      );
+
+      expect(controller.jobById('job-1')?.failedUnitIds, {'unit-1'});
+      expect(controller.jobById('job-1')?.completedUnitIds, {'unit-2'});
+
+      await controller.retry('job-1');
+      await _waitUntil(
+        () =>
+            controller.jobById('job-1')?.status ==
+                TranslationJobStatus.completed &&
+            !controller.isJobRunning('job-1'),
+      );
+
+      expect(engine.requestedUnitIds, ['unit-1', 'unit-2', 'unit-1']);
+      expect(controller.jobById('job-1')?.failedUnitIds, isEmpty);
+    },
+  );
+
+  test('MOBI jobs convert input and preserve source output format', () async {
+    final session = _FakeSession(units: [_unit('unit-1')]);
+    final converter = _FakeBookConverter();
+    await jobRepository.save([
+      _job(
+        outputDirectory: outputDirectory,
+        sourcePath: '/books/book.mobi',
+        preserveSourceFormat: true,
+      ),
+    ]);
+    final controller = createController(
+      session: session,
+      engine: _FakeEngine(),
+      bookConverter: converter,
+    );
+
+    await controller.initialize();
+    await _waitUntil(
+      () =>
+          controller.jobById('job-1')?.status ==
+              TranslationJobStatus.completed &&
+          !controller.isJobRunning('job-1'),
+    );
+
+    final completed = controller.jobById('job-1')!;
+    expect(converter.conversions, hasLength(2));
+    expect(converter.conversions.first.$1, endsWith('.mobi'));
+    expect(converter.conversions.first.$2, endsWith('input.epub'));
+    expect(converter.conversions.last.$1, endsWith('translated.epub'));
+    expect(converter.conversions.last.$2, endsWith('.mobi'));
+    expect(completed.outputPath, endsWith('.mobi'));
+    expect(await controller.readJobLog('job-1'), isNotEmpty);
+  });
+
+  test(
+    'MOBI jobs report the Calibre install command when unavailable',
+    () async {
+      await jobRepository.save([
+        _job(outputDirectory: outputDirectory, sourcePath: '/books/book.mobi'),
+      ]);
+      final controller = createController(
+        session: _FakeSession(units: [_unit('unit-1')]),
+        engine: _FakeEngine(),
+        bookConverter: _MissingBookConverter(),
+      );
+
+      await controller.initialize();
+      await _waitUntil(
+        () =>
+            controller.jobById('job-1')?.status ==
+                TranslationJobStatus.waitingForAction &&
+            !controller.isJobRunning('job-1'),
+      );
+
+      expect(
+        controller.jobById('job-1')?.errorMessage,
+        contains('brew install --cask calibre'),
+      );
+    },
+  );
+
+  test('paused jobs remain paused after application restart', () async {
+    await jobRepository.save([
+      _job(
+        outputDirectory: outputDirectory,
+      ).copyWith(status: TranslationJobStatus.paused),
+    ]);
+    final controller = createController(
+      session: _FakeSession(units: [_unit('unit-1')]),
+      engine: _FakeEngine(),
+    );
+
+    await controller.initialize();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(controller.jobById('job-1')?.status, TranslationJobStatus.paused);
+  });
+
+  test(
+    'retranslate all clears progress and requests every unit again',
+    () async {
+      final session = _FakeSession(units: [_unit('unit-1'), _unit('unit-2')]);
+      final engine = _FakeEngine();
+      await jobRepository.save([_job(outputDirectory: outputDirectory)]);
+      final controller = createController(session: session, engine: engine);
+
+      await controller.initialize();
+      await _waitUntil(
+        () =>
+            controller.jobById('job-1')?.status ==
+                TranslationJobStatus.completed &&
+            !controller.isJobRunning('job-1'),
+      );
+      await controller.retranslateAll('job-1');
+      await _waitUntil(
+        () =>
+            controller.jobById('job-1')?.status ==
+                TranslationJobStatus.completed &&
+            engine.requestedUnitIds.length == 4 &&
+            !controller.isJobRunning('job-1'),
+      );
+
+      expect(engine.requestedUnitIds, ['unit-1', 'unit-2', 'unit-1', 'unit-2']);
+      expect(controller.jobById('job-1')?.completedUnitIds, {
+        'unit-1',
+        'unit-2',
+      });
     },
   );
 
@@ -334,17 +512,20 @@ void main() {
 
 TranslationJob _job({
   required Directory outputDirectory,
+  String sourcePath = '/books/book.epub',
   int totalUnits = 0,
   Set<String> completedUnitIds = const {},
   bool keepOriginal = false,
+  bool preserveSourceFormat = false,
 }) => TranslationJob(
   id: 'job-1',
-  sourcePath: '/books/book.epub',
-  sourceBookmark: '/books/book.epub',
+  sourcePath: sourcePath,
+  sourceBookmark: sourcePath,
   outputDirectory: outputDirectory.path,
   outputDirectoryBookmark: outputDirectory.path,
   targetLanguage: 'English',
   keepOriginal: keepOriginal,
+  preserveSourceFormat: preserveSourceFormat,
   provider: TranslationProvider.deepseek,
   createdAt: DateTime.utc(2026),
   status: TranslationJobStatus.queued,
@@ -514,4 +695,99 @@ final class _FakeEngine implements TranslationEngine {
       closed.complete();
     }
   }
+}
+
+final class _PauseOnceEngine implements TranslationEngine {
+  final Completer<void> firstRequestStarted = Completer<void>();
+  final List<String> requestedUnitIds = [];
+  var _pausedOnce = false;
+
+  @override
+  String get id => 'pause-once';
+
+  @override
+  Stream<TranslationEvent> translate(TranslationRequest request) async* {
+    requestedUnitIds.add(request.unit.id);
+    if (!_pausedOnce) {
+      _pausedOnce = true;
+      firstRequestStarted.complete();
+      await request.cancellationToken.whenCancelled;
+      yield const TranslationCancelled();
+      return;
+    }
+    yield TranslationCompleted(
+      TranslatedUnit(
+        unitId: request.unit.id,
+        text: 'translated ${request.unit.sourceText}',
+      ),
+    );
+  }
+
+  @override
+  void close() {}
+}
+
+final class _FailOnceEngine implements TranslationEngine {
+  _FailOnceEngine(this.unitToFail);
+
+  final String unitToFail;
+  final List<String> requestedUnitIds = [];
+  var _failed = false;
+
+  @override
+  String get id => 'fail-once';
+
+  @override
+  Stream<TranslationEvent> translate(TranslationRequest request) async* {
+    requestedUnitIds.add(request.unit.id);
+    if (!_failed && request.unit.id == unitToFail) {
+      _failed = true;
+      yield const TranslationFailed('simulated failure');
+      return;
+    }
+    yield TranslationCompleted(
+      TranslatedUnit(
+        unitId: request.unit.id,
+        text: 'translated ${request.unit.sourceText}',
+      ),
+    );
+  }
+
+  @override
+  void close() {}
+}
+
+final class _FakeBookConverter implements BookConverter {
+  final List<(String, String)> conversions = [];
+
+  @override
+  Future<CalibreInstallation?> detect({String customExecutable = ''}) async =>
+      const CalibreInstallation(
+        executable: '/fake/ebook-convert',
+        version: 'ebook-convert test',
+      );
+
+  @override
+  Future<void> convert({
+    required String executable,
+    required File input,
+    required File output,
+  }) async {
+    conversions.add((input.path, output.path));
+    await output.parent.create(recursive: true);
+    await output.writeAsString('converted');
+  }
+}
+
+final class _MissingBookConverter implements BookConverter {
+  @override
+  Future<CalibreInstallation?> detect({String customExecutable = ''}) async =>
+      null;
+
+  @override
+  Future<void> convert({
+    required String executable,
+    required File input,
+    required File output,
+  }) => throw StateError('convert should not be called');
 }

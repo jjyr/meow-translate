@@ -25,4 +25,12 @@ void main() {
 
     expect(rememberedKeepOriginal(settings), isTrue);
   });
+
+  test('source format output preference is persisted in settings', () {
+    final settings = AppSettings.defaults().copyWith(
+      preserveSourceFormat: true,
+    );
+
+    expect(settings.preserveSourceFormat, isTrue);
+  });
 }

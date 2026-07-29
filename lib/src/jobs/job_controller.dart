@@ -7,6 +7,8 @@ import 'package:path/path.dart' as path;
 
 import '../ebook/epub/epub_codec.dart';
 import '../ebook/ebook_codec.dart';
+import '../ebook/book_format.dart';
+import '../ebook/calibre_service.dart';
 import '../platform/desktop_services.dart';
 import '../settings/app_settings.dart';
 import '../settings/settings_repository.dart';
@@ -16,6 +18,7 @@ import '../translation/codex_cli_translation_engine.dart';
 import '../translation/translation_engine.dart';
 import '../translation/translation_models.dart';
 import 'job_repository.dart';
+import 'job_log_repository.dart';
 import 'output_file_allocator.dart';
 import 'translation_job.dart';
 
@@ -30,9 +33,13 @@ final class JobController extends ChangeNotifier {
     required this.desktopServices,
     this.maximumConcurrentJobs = 2,
     this.outputFileAllocator = const OutputFileAllocator(),
+    BookConverter? bookConverter,
+    JobLogRepository? jobLogRepository,
     EbookCodec? codec,
     TranslationEngineFactory? translationEngineFactory,
   }) : _codec = codec ?? const EpubCodec(),
+       _bookConverter = bookConverter ?? const CalibreService(),
+       jobLogRepository = jobLogRepository ?? JobLogRepository(paths),
        _translationEngineFactory =
            translationEngineFactory ?? createTranslationEngine;
 
@@ -42,10 +49,13 @@ final class JobController extends ChangeNotifier {
   final DesktopServices desktopServices;
   final int maximumConcurrentJobs;
   final OutputFileAllocator outputFileAllocator;
+  final JobLogRepository jobLogRepository;
   final EbookCodec _codec;
+  final BookConverter _bookConverter;
   final TranslationEngineFactory _translationEngineFactory;
   final Set<String> _runningJobIds = {};
   final Set<String> _abandonRequested = {};
+  final Set<String> _pauseRequested = {};
   final Map<String, TranslationCancellationToken> _cancellationTokens = {};
   final Random _random = Random.secure();
 
@@ -53,12 +63,17 @@ final class JobController extends ChangeNotifier {
   List<TranslationJob> jobs = [];
   bool initialized = false;
   String? initializationError;
+  CalibreInstallation? calibreInstallation;
+  bool checkingCalibre = false;
 
   int get runningJobCount => jobs.where((job) => job.status.isRunning).length;
+
+  bool isJobRunning(String jobId) => _runningJobIds.contains(jobId);
 
   Future<void> initialize() async {
     try {
       settings = await settingsRepository.load();
+      await refreshCalibre();
       jobs = await jobRepository.load();
       jobs = [
         for (final job in jobs)
@@ -109,6 +124,17 @@ final class JobController extends ChangeNotifier {
     settings = value;
     notifyListeners();
     await settingsRepository.save(value);
+    await refreshCalibre();
+  }
+
+  Future<void> refreshCalibre() async {
+    checkingCalibre = true;
+    notifyListeners();
+    calibreInstallation = await _bookConverter.detect(
+      customExecutable: settings.calibreExecutable,
+    );
+    checkingCalibre = false;
+    notifyListeners();
   }
 
   Future<void> enqueue({
@@ -116,6 +142,7 @@ final class JobController extends ChangeNotifier {
     required String outputDirectory,
     required String targetLanguage,
     required bool keepOriginal,
+    required bool preserveSourceFormat,
     required TranslationProvider provider,
   }) async {
     final outputBookmark =
@@ -146,6 +173,7 @@ final class JobController extends ChangeNotifier {
           outputDirectoryBookmark: outputBookmark,
           targetLanguage: targetLanguage,
           keepOriginal: keepOriginal,
+          preserveSourceFormat: preserveSourceFormat,
           provider: provider,
           createdAt: now,
           status: TranslationJobStatus.queued,
@@ -154,6 +182,11 @@ final class JobController extends ChangeNotifier {
           failedUnitIds: const {},
         ),
       );
+      await _log(
+        id,
+        'Job queued for ${path.basename(sourcePath)} '
+        '(${BookFormat.fromPath(sourcePath)?.name.toUpperCase() ?? 'UNKNOWN'}).',
+      );
     }
     await updateSettings(
       settings.copyWith(
@@ -161,6 +194,7 @@ final class JobController extends ChangeNotifier {
         outputDirectoryBookmark: outputBookmark,
         targetLanguage: targetLanguage,
         keepOriginal: keepOriginal,
+        preserveSourceFormat: preserveSourceFormat,
         lastProvider: provider,
       ),
     );
@@ -176,8 +210,79 @@ final class JobController extends ChangeNotifier {
     await _replace(
       job.copyWith(status: TranslationJobStatus.queued, clearError: true),
     );
+    await _log(jobId, 'Retrying failed and incomplete translation units.');
     _pump();
   }
+
+  Future<void> pause(String jobId) async {
+    final job = jobById(jobId);
+    if (job == null ||
+        job.status == TranslationJobStatus.paused ||
+        job.status == TranslationJobStatus.completed ||
+        job.status == TranslationJobStatus.abandoned) {
+      return;
+    }
+    if (job.status == TranslationJobStatus.queued) {
+      await _replace(
+        job.copyWith(status: TranslationJobStatus.paused, clearError: true),
+      );
+      await _log(jobId, 'Job paused while queued.');
+      return;
+    }
+    _pauseRequested.add(jobId);
+    if (job.status == TranslationJobStatus.translating) {
+      _cancellationTokens[jobId]?.cancel();
+      await _log(jobId, 'Pause requested; cancelling the active translation.');
+    } else {
+      await _log(
+        jobId,
+        'Pause requested; the current ${job.status.label.toLowerCase()} '
+        'phase will finish first.',
+      );
+    }
+  }
+
+  Future<void> resume(String jobId) async {
+    final job = jobById(jobId);
+    if (job == null || job.status != TranslationJobStatus.paused) {
+      return;
+    }
+    _pauseRequested.remove(jobId);
+    await _replace(
+      job.copyWith(status: TranslationJobStatus.queued, clearError: true),
+    );
+    await _log(jobId, 'Job resumed.');
+    _pump();
+  }
+
+  Future<void> retranslateAll(String jobId) async {
+    final job = jobById(jobId);
+    if (job == null ||
+        job.status.isRunning ||
+        job.status == TranslationJobStatus.queued ||
+        job.status == TranslationJobStatus.abandoned) {
+      return;
+    }
+    _pauseRequested.remove(jobId);
+    await _deleteWorkspace(jobId);
+    await _replace(
+      job.copyWith(
+        status: TranslationJobStatus.queued,
+        totalUnits: 0,
+        completedUnitIds: const {},
+        failedUnitIds: const {},
+        clearError: true,
+        clearOutputPath: true,
+      ),
+    );
+    await _log(jobId, 'All previous translations were cleared.');
+    _pump();
+  }
+
+  Future<List<JobLogEntry>> readJobLog(String jobId) =>
+      jobLogRepository.read(jobId);
+
+  File jobLogFile(String jobId) => jobLogRepository.fileFor(jobId);
 
   Future<void> abandon(String jobId) async {
     final job = jobById(jobId);
@@ -185,6 +290,7 @@ final class JobController extends ChangeNotifier {
       return;
     }
     _abandonRequested.add(jobId);
+    _pauseRequested.remove(jobId);
     _cancellationTokens[jobId]?.cancel();
     await _replace(
       job.copyWith(
@@ -192,6 +298,7 @@ final class JobController extends ChangeNotifier {
         errorMessage: 'The job was abandoned by the user.',
       ),
     );
+    await _log(jobId, 'Job abandoned by the user.', level: JobLogLevel.warning);
     if (!_runningJobIds.contains(jobId)) {
       final abandoned = jobById(jobId);
       if (abandoned?.outputPath != null) {
@@ -241,71 +348,28 @@ final class JobController extends ChangeNotifier {
       if (job == null || _abandonRequested.contains(jobId)) {
         return;
       }
-      if (!await _replace(
-        job.copyWith(status: TranslationJobStatus.unpacking),
-      )) {
-        return;
-      }
-      job = jobById(jobId);
-      if (job == null || await _stopIfAbandoned(jobId)) {
-        return;
-      }
+      await _log(jobId, 'Job started for ${path.basename(job.sourcePath)}.');
       await _migrateLegacyWorkspace(jobId);
       job = jobById(jobId);
-      if (job == null || await _stopIfAbandoned(jobId)) {
+      if (job == null ||
+          await _stopIfAbandoned(jobId) ||
+          await _stopIfPaused(jobId)) {
         return;
       }
-      final workspace = paths.workspaceFor(jobId);
-      final manifest = File(path.join(workspace.path, 'epub-workspace.json'));
-      final EbookSession session;
-      if (await manifest.exists()) {
-        session = await _codec.restore(workspace);
-      } else {
-        if (job.totalUnits != 0 ||
-            job.completedUnitIds.isNotEmpty ||
-            job.failedUnitIds.isNotEmpty) {
-          job = job.copyWith(
-            totalUnits: 0,
-            completedUnitIds: const {},
-            failedUnitIds: const {},
-            clearError: true,
-          );
-          if (!await _replace(job)) {
-            return;
-          }
-        }
-        final sourceAccess = await _startRequiredAccess(
-          job.sourceBookmark,
-          'Source access could not be restored. Add this book again.',
-        );
-        try {
-          final refreshed = sourceAccess.refreshedBookmark;
-          if (sourceAccess.resolvedPath != job.sourcePath ||
-              (refreshed != null && refreshed != job.sourceBookmark)) {
-            job = job.copyWith(
-              sourcePath: sourceAccess.resolvedPath,
-              sourceBookmark: refreshed ?? job.sourceBookmark,
-            );
-            if (!await _replace(job)) {
-              return;
-            }
-          }
-          session = await _codec.unpack(
-            File(sourceAccess.resolvedPath),
-            workspace: workspace,
-          );
-        } finally {
-          await sourceAccess.close();
-        }
-      }
+      final session = await _prepareSession(jobId);
+      if (session == null) return;
 
       job = jobById(jobId);
-      if (job == null || await _stopIfAbandoned(jobId)) {
+      if (job == null ||
+          await _stopIfAbandoned(jobId) ||
+          await _stopIfPaused(jobId)) {
         return;
       }
       final recordedUnitIds = await session.recordedTranslationUnitIds();
       job = jobById(jobId);
-      if (job == null || await _stopIfAbandoned(jobId)) {
+      if (job == null ||
+          await _stopIfAbandoned(jobId) ||
+          await _stopIfPaused(jobId)) {
         return;
       }
       if (job.completedUnitIds.difference(recordedUnitIds).isNotEmpty) {
@@ -321,13 +385,15 @@ final class JobController extends ChangeNotifier {
       if (job.totalUnits == 0) {
         var count = 0;
         await for (final _ in session.readTranslationUnits()) {
-          if (await _stopIfAbandoned(jobId)) {
+          if (await _stopIfAbandoned(jobId) || await _stopIfPaused(jobId)) {
             return;
           }
           count++;
         }
         job = jobById(jobId);
-        if (job == null || await _stopIfAbandoned(jobId)) {
+        if (job == null ||
+            await _stopIfAbandoned(jobId) ||
+            await _stopIfPaused(jobId)) {
           return;
         }
         job = job.copyWith(totalUnits: count);
@@ -337,7 +403,9 @@ final class JobController extends ChangeNotifier {
       }
 
       job = jobById(jobId);
-      if (job == null || await _stopIfAbandoned(jobId)) {
+      if (job == null ||
+          await _stopIfAbandoned(jobId) ||
+          await _stopIfPaused(jobId)) {
         return;
       }
       if (!await _replace(
@@ -345,6 +413,11 @@ final class JobController extends ChangeNotifier {
       )) {
         return;
       }
+      await _log(
+        jobId,
+        'Translation started with ${job.provider.label}; '
+        '${job.completedUnits} of ${job.totalUnits} units already complete.',
+      );
       job = jobById(jobId);
       if (job == null || await _stopIfAbandoned(jobId)) {
         return;
@@ -354,12 +427,15 @@ final class JobController extends ChangeNotifier {
       try {
         await for (final unit in session.readTranslationUnits()) {
           job = jobById(jobId);
-          if (job == null || await _stopIfAbandoned(jobId)) {
+          if (job == null ||
+              await _stopIfAbandoned(jobId) ||
+              await _stopIfPaused(jobId)) {
             return;
           }
           if (job.completedUnitIds.contains(unit.id)) {
             continue;
           }
+          await _log(jobId, 'Translating unit ${unit.id}.');
 
           TranslationCompleted? completed;
           TranslationFailed? failed;
@@ -383,17 +459,22 @@ final class JobController extends ChangeNotifier {
           if (await _stopIfAbandoned(jobId)) {
             return;
           }
+          if (await _stopIfPaused(jobId)) {
+            return;
+          }
           if (failed != null || completed == null) {
             final failedIds = {...job.failedUnitIds, unit.id};
+            final message =
+                failed?.message ?? 'The translation ended unexpectedly.';
             await _replace(
-              job.copyWith(
-                status: TranslationJobStatus.waitingForAction,
-                failedUnitIds: failedIds,
-                errorMessage:
-                    failed?.message ?? 'The translation ended unexpectedly.',
-              ),
+              job.copyWith(failedUnitIds: failedIds, errorMessage: message),
             );
-            return;
+            await _log(
+              jobId,
+              'Unit ${unit.id} failed: $message',
+              level: JobLogLevel.error,
+            );
+            continue;
           }
 
           final translated = completed.unit;
@@ -413,13 +494,31 @@ final class JobController extends ChangeNotifier {
           if (!await _replace(job)) {
             return;
           }
+          await _log(jobId, 'Unit ${unit.id} translated successfully.');
         }
       } finally {
         engine.close();
       }
 
       job = jobById(jobId);
-      if (job == null || await _stopIfAbandoned(jobId)) {
+      if (job == null ||
+          await _stopIfAbandoned(jobId) ||
+          await _stopIfPaused(jobId)) {
+        return;
+      }
+      if (job.failedUnitIds.isNotEmpty) {
+        await _log(
+          jobId,
+          'Translation stopped with ${job.failedUnitIds.length} failed unit(s).',
+          level: JobLogLevel.warning,
+        );
+        await _replace(
+          job.copyWith(
+            status: TranslationJobStatus.waitingForAction,
+            errorMessage:
+                '${job.failedUnitIds.length} translation unit(s) failed.',
+          ),
+        );
         return;
       }
       if (!await _replace(
@@ -427,6 +526,7 @@ final class JobController extends ChangeNotifier {
       )) {
         return;
       }
+      await _log(jobId, 'Repacking translated EPUB.');
       job = jobById(jobId);
       if (job == null || await _stopIfAbandoned(jobId)) {
         return;
@@ -473,6 +573,7 @@ final class JobController extends ChangeNotifier {
           sourcePath: job.sourcePath,
           targetLanguage: job.targetLanguage,
           jobId: jobId,
+          outputExtension: job.outputExtension,
         );
         job = job.copyWith(outputPath: reservation.output.path);
         if (!await _replace(job)) {
@@ -483,11 +584,51 @@ final class JobController extends ChangeNotifier {
           await _cancelOutputReservation(jobId, reservation);
           return;
         }
-        await session.repack(
-          reservation.staging,
-          keepOriginal: job.keepOriginal,
-        );
+        if (job.sourceFormat.requiresCalibre && job.preserveSourceFormat) {
+          final translatedEpub = File(
+            path.join(paths.workspaceFor(jobId).path, 'translated.epub'),
+          );
+          await session.repack(translatedEpub, keepOriginal: job.keepOriginal);
+          if (await _stopIfAbandoned(jobId)) {
+            await _cancelOutputReservation(jobId, reservation);
+            return;
+          }
+          if (await _stopIfPaused(jobId)) {
+            await _cancelOutputReservation(jobId, reservation);
+            return;
+          }
+          job = jobById(jobId)!;
+          await _replace(
+            job.copyWith(status: TranslationJobStatus.convertingOutput),
+          );
+          await _log(
+            jobId,
+            'Converting translated EPUB to ${job.sourceFormat.name.toUpperCase()}.',
+          );
+          final installation = await _requireCalibre();
+          final converted = File(
+            path.join(
+              paths.workspaceFor(jobId).path,
+              'translated${job.sourceFormat.extension}',
+            ),
+          );
+          await _bookConverter.convert(
+            executable: installation.executable,
+            input: translatedEpub,
+            output: converted,
+          );
+          await converted.copy(reservation.staging.path);
+        } else {
+          await session.repack(
+            reservation.staging,
+            keepOriginal: job.keepOriginal,
+          );
+        }
         if (await _stopIfAbandoned(jobId)) {
+          await _cancelOutputReservation(jobId, reservation);
+          return;
+        }
+        if (await _stopIfPaused(jobId)) {
           await _cancelOutputReservation(jobId, reservation);
           return;
         }
@@ -504,6 +645,7 @@ final class JobController extends ChangeNotifier {
           reservation = null;
           return;
         }
+        await _log(jobId, 'Output published to ${output.path}.');
         final completed = await _replace(
           job.copyWith(
             status: TranslationJobStatus.completed,
@@ -549,7 +691,10 @@ final class JobController extends ChangeNotifier {
       }
     } on Object catch (error) {
       final job = jobById(jobId);
-      if (job != null && job.status != TranslationJobStatus.abandoned) {
+      if (job != null &&
+          job.status != TranslationJobStatus.abandoned &&
+          job.status != TranslationJobStatus.paused) {
+        await _log(jobId, 'Job failed: $error', level: JobLogLevel.error);
         await _replace(
           job.copyWith(
             status: TranslationJobStatus.waitingForAction,
@@ -561,6 +706,130 @@ final class JobController extends ChangeNotifier {
       _cancellationTokens.remove(jobId);
       await _stopIfAbandoned(jobId);
     }
+  }
+
+  Future<EbookSession?> _prepareSession(String jobId) async {
+    var job = jobById(jobId);
+    if (job == null) return null;
+    final workspace = paths.workspaceFor(jobId);
+    final manifest = File(path.join(workspace.path, 'epub-workspace.json'));
+    if (await manifest.exists()) {
+      await _replace(job.copyWith(status: TranslationJobStatus.unpacking));
+      await _log(jobId, 'Restoring the existing EPUB workspace.');
+      return _codec.restore(workspace);
+    }
+
+    if (job.totalUnits != 0 ||
+        job.completedUnitIds.isNotEmpty ||
+        job.failedUnitIds.isNotEmpty) {
+      job = job.copyWith(
+        totalUnits: 0,
+        completedUnitIds: const {},
+        failedUnitIds: const {},
+        clearError: true,
+      );
+      if (!await _replace(job)) return null;
+    }
+
+    final sourceAccess = await _startRequiredAccess(
+      job.sourceBookmark,
+      'Source access could not be restored. Add this book again.',
+    );
+    try {
+      final refreshed = sourceAccess.refreshedBookmark;
+      if (sourceAccess.resolvedPath != job.sourcePath ||
+          (refreshed != null && refreshed != job.sourceBookmark)) {
+        job = job.copyWith(
+          sourcePath: sourceAccess.resolvedPath,
+          sourceBookmark: refreshed ?? job.sourceBookmark,
+        );
+        if (!await _replace(job)) return null;
+      }
+
+      File epubInput = File(sourceAccess.resolvedPath);
+      if (job.sourceFormat.requiresCalibre) {
+        await workspace.create(recursive: true);
+        final intermediate = File(path.join(workspace.path, 'input.epub'));
+        if (!await intermediate.exists()) {
+          await _replace(
+            job.copyWith(status: TranslationJobStatus.convertingInput),
+          );
+          await _log(
+            jobId,
+            'Converting ${job.sourceFormat.name.toUpperCase()} input to EPUB.',
+          );
+          final installation = await _requireCalibre();
+          await _bookConverter.convert(
+            executable: installation.executable,
+            input: File(sourceAccess.resolvedPath),
+            output: intermediate,
+          );
+          await _log(jobId, 'Input conversion completed.');
+        } else {
+          await _log(jobId, 'Reusing the converted EPUB input.');
+        }
+        epubInput = intermediate;
+        if (await _stopIfAbandoned(jobId) || await _stopIfPaused(jobId)) {
+          return null;
+        }
+      }
+
+      job = jobById(jobId);
+      if (job == null) return null;
+      await _replace(job.copyWith(status: TranslationJobStatus.unpacking));
+      await _log(jobId, 'Unpacking EPUB content.');
+      final session = await _codec.unpack(epubInput, workspace: workspace);
+      await _log(jobId, 'EPUB content unpacked.');
+      return session;
+    } finally {
+      await sourceAccess.close();
+    }
+  }
+
+  Future<CalibreInstallation> _requireCalibre() async {
+    final existing = calibreInstallation;
+    if (existing != null) return existing;
+    final detected = await _bookConverter.detect(
+      customExecutable: settings.calibreExecutable,
+    );
+    calibreInstallation = detected;
+    if (detected == null) {
+      throw const BookConversionException(
+        'Calibre ebook-convert is required. Install it with: '
+        '${CalibreService.installCommand}',
+      );
+    }
+    return detected;
+  }
+
+  Future<bool> _stopIfPaused(String jobId) async {
+    final current = jobById(jobId);
+    if (!_pauseRequested.contains(jobId) &&
+        current?.status != TranslationJobStatus.paused) {
+      return false;
+    }
+    _pauseRequested.remove(jobId);
+    if (current != null && current.status != TranslationJobStatus.paused) {
+      await _log(jobId, 'Job paused.');
+      await _replace(
+        current.copyWith(status: TranslationJobStatus.paused, clearError: true),
+      );
+    }
+    return true;
+  }
+
+  Future<void> _log(
+    String jobId,
+    String message, {
+    JobLogLevel level = JobLogLevel.info,
+  }) async {
+    await jobLogRepository.append(
+      jobId,
+      message,
+      level: level,
+      secrets: settings.models.values.map((model) => model.apiKey),
+    );
+    notifyListeners();
   }
 
   Future<SecurityScopedAccess> _startRequiredAccess(

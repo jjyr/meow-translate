@@ -29,7 +29,7 @@ void main() {
     final deepSeek = models['deepseek'] as Map<String, Object>;
     final restored = AppSettings.fromJson(json);
 
-    expect(json['version'], 4);
+    expect(json['version'], 5);
     expect(deepSeek['translation_guidance'], 'Keep the prose concise.');
     expect(deepSeek.containsKey('prompt'), isFalse);
     expect(
@@ -51,5 +51,17 @@ void main() {
       restored.model(TranslationProvider.deepseek).prompt,
       defaultTranslationPrompt,
     );
+  });
+
+  test('format conversion preferences survive serialization', () {
+    final settings = AppSettings.defaults().copyWith(
+      preserveSourceFormat: true,
+      calibreExecutable: '/Applications/calibre/ebook-convert',
+    );
+
+    final restored = AppSettings.fromJson(settings.toJson());
+
+    expect(restored.preserveSourceFormat, isTrue);
+    expect(restored.calibreExecutable, '/Applications/calibre/ebook-convert');
   });
 }

@@ -1,8 +1,11 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart' show SelectableText;
+import 'package:flutter/services.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:path/path.dart' as path;
 
 import '../jobs/job_controller.dart';
+import '../jobs/job_log_repository.dart';
 import '../l10n/app_localizations.dart';
 import '../jobs/translation_job.dart';
 import '../settings/app_settings.dart';
@@ -94,7 +97,8 @@ final class _JobCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        '${job.status.label} · ${job.provider.label}'
+                        '${_statusLabel(context, job.status)} · '
+                        '${job.provider.label}'
                         ' · ${job.targetLanguage}'
                         '${job.keepOriginal ? ' · Bilingual' : ''}',
                         style: theme.typography.subheadline,
@@ -151,9 +155,12 @@ final class _JobCard extends StatelessWidget {
 
   IconData _statusIcon(TranslationJobStatus status) => switch (status) {
     TranslationJobStatus.queued => CupertinoIcons.clock,
+    TranslationJobStatus.convertingInput => CupertinoIcons.arrow_2_circlepath,
     TranslationJobStatus.unpacking => CupertinoIcons.archivebox,
     TranslationJobStatus.translating => CupertinoIcons.text_bubble,
     TranslationJobStatus.repacking => CupertinoIcons.archivebox_fill,
+    TranslationJobStatus.convertingOutput => CupertinoIcons.arrow_2_circlepath,
+    TranslationJobStatus.paused => CupertinoIcons.pause_circle,
     TranslationJobStatus.waitingForAction =>
       CupertinoIcons.exclamationmark_triangle,
     TranslationJobStatus.completed => CupertinoIcons.check_mark_circled_solid,
@@ -163,9 +170,22 @@ final class _JobCard extends StatelessWidget {
   Color _statusColor(TranslationJobStatus status) => switch (status) {
     TranslationJobStatus.waitingForAction => MacosColors.systemOrangeColor,
     TranslationJobStatus.completed => MacosColors.systemGreenColor,
+    TranslationJobStatus.paused => MacosColors.systemYellowColor,
     TranslationJobStatus.abandoned => MacosColors.systemGrayColor,
     _ => MacosColors.systemBlueColor,
   };
+
+  String _statusLabel(BuildContext context, TranslationJobStatus status) =>
+      switch (status) {
+        TranslationJobStatus.convertingInput => context.l10n.t(
+          'statusConvertingInput',
+        ),
+        TranslationJobStatus.convertingOutput => context.l10n.t(
+          'statusConvertingOutput',
+        ),
+        TranslationJobStatus.paused => context.l10n.t('statusPaused'),
+        _ => status.label,
+      };
 }
 
 final class _JobActions extends StatelessWidget {
@@ -176,42 +196,207 @@ final class _JobActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final actions = <Widget>[
+      PushButton(
+        controlSize: ControlSize.regular,
+        secondary: true,
+        onPressed: () => _showJobLog(context),
+        child: Text(context.l10n.t('logs')),
+      ),
+    ];
     if (job.status == TranslationJobStatus.waitingForAction) {
-      return Row(
-        children: [
-          PushButton(
-            controlSize: ControlSize.regular,
-            secondary: true,
-            onPressed: () => controller.abandon(job.id),
-            child: Text(context.l10n.t('abandon')),
+      actions.addAll([
+        PushButton(
+          controlSize: ControlSize.regular,
+          secondary: true,
+          onPressed: () => _confirmRetranslateAll(context),
+          child: Text(context.l10n.t('retranslateAll')),
+        ),
+        PushButton(
+          controlSize: ControlSize.regular,
+          color: MacosTheme.of(context).primaryColor,
+          onPressed: () => controller.retry(job.id),
+          child: Text(context.l10n.t('retryFailedUnits')),
+        ),
+        PushButton(
+          controlSize: ControlSize.regular,
+          secondary: true,
+          onPressed: () => controller.abandon(job.id),
+          child: Text(context.l10n.t('abandon')),
+        ),
+      ]);
+    } else if (job.status == TranslationJobStatus.paused) {
+      actions.addAll([
+        PushButton(
+          controlSize: ControlSize.regular,
+          secondary: true,
+          onPressed: () => _confirmRetranslateAll(context),
+          child: Text(context.l10n.t('retranslateAll')),
+        ),
+        PushButton(
+          controlSize: ControlSize.regular,
+          color: MacosTheme.of(context).primaryColor,
+          onPressed: () => controller.resume(job.id),
+          child: Text(context.l10n.t('resume')),
+        ),
+        PushButton(
+          controlSize: ControlSize.regular,
+          secondary: true,
+          onPressed: () => controller.abandon(job.id),
+          child: Text(context.l10n.t('abandon')),
+        ),
+      ]);
+    } else if (job.status == TranslationJobStatus.completed &&
+        job.outputPath != null) {
+      actions.addAll([
+        PushButton(
+          controlSize: ControlSize.regular,
+          secondary: true,
+          onPressed: () => _confirmRetranslateAll(context),
+          child: Text(context.l10n.t('retranslateAll')),
+        ),
+        PushButton(
+          controlSize: ControlSize.regular,
+          secondary: true,
+          onPressed: () => controller.desktopServices.reveal(job.outputPath!),
+          child: Text(context.l10n.t('showFinder')),
+        ),
+      ]);
+    } else if (job.status.isRunning ||
+        job.status == TranslationJobStatus.queued) {
+      actions.addAll([
+        PushButton(
+          controlSize: ControlSize.regular,
+          secondary: true,
+          onPressed: () => controller.pause(job.id),
+          child: Text(context.l10n.t('pause')),
+        ),
+        PushButton(
+          controlSize: ControlSize.regular,
+          secondary: true,
+          onPressed: () => controller.abandon(job.id),
+          child: Text(context.l10n.t('cancel')),
+        ),
+      ]);
+    }
+    return Wrap(spacing: 8, runSpacing: 8, children: actions);
+  }
+
+  Future<void> _confirmRetranslateAll(BuildContext context) async {
+    final confirmed = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (dialogContext) => CupertinoAlertDialog(
+        title: Text(context.l10n.t('retranslateAll')),
+        content: Text(context.l10n.t('retranslateConfirm')),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(context.l10n.t('cancel')),
           ),
-          const SizedBox(width: 8),
-          PushButton(
-            controlSize: ControlSize.regular,
-            color: MacosTheme.of(context).primaryColor,
-            onPressed: () => controller.retry(job.id),
-            child: Text(context.l10n.t('retry')),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(context.l10n.t('retranslateAll')),
           ),
         ],
-      );
+      ),
+    );
+    if (confirmed ?? false) {
+      await controller.retranslateAll(job.id);
     }
-    if (job.status == TranslationJobStatus.completed &&
-        job.outputPath != null) {
-      return PushButton(
-        controlSize: ControlSize.regular,
-        secondary: true,
-        onPressed: () => controller.desktopServices.reveal(job.outputPath!),
-        child: Text(context.l10n.t('showFinder')),
-      );
-    }
-    if (job.status.isRunning || job.status == TranslationJobStatus.queued) {
-      return PushButton(
-        controlSize: ControlSize.regular,
-        secondary: true,
-        onPressed: () => controller.abandon(job.id),
-        child: Text(context.l10n.t('cancel')),
-      );
-    }
-    return const SizedBox.shrink();
+  }
+
+  Future<void> _showJobLog(BuildContext context) {
+    return showMacosSheet<void>(
+      context: context,
+      builder: (context) => MacosSheet(
+        child: SizedBox(
+          width: 760,
+          height: 520,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.l10n.t('jobLog'),
+                  style: MacosTheme.of(context).typography.title2,
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: AnimatedBuilder(
+                    animation: controller,
+                    builder: (context, _) => FutureBuilder<List<JobLogEntry>>(
+                      future: controller.readJobLog(job.id),
+                      builder: (context, snapshot) {
+                        final entries = snapshot.data ?? const <JobLogEntry>[];
+                        if (entries.isEmpty) {
+                          return Center(child: Text(context.l10n.t('noLogs')));
+                        }
+                        return Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          color: MacosTheme.of(
+                            context,
+                          ).canvasColor.withValues(alpha: 0.45),
+                          child: SingleChildScrollView(
+                            child: SelectableText(
+                              entries
+                                  .map((entry) => entry.displayText)
+                                  .join('\n'),
+                              style: const TextStyle(
+                                fontFamily: 'Menlo',
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    PushButton(
+                      controlSize: ControlSize.regular,
+                      secondary: true,
+                      onPressed: () async {
+                        final entries = await controller.readJobLog(job.id);
+                        await Clipboard.setData(
+                          ClipboardData(
+                            text: entries
+                                .map((entry) => entry.displayText)
+                                .join('\n'),
+                          ),
+                        );
+                      },
+                      child: Text(context.l10n.t('copyLogs')),
+                    ),
+                    const SizedBox(width: 8),
+                    PushButton(
+                      controlSize: ControlSize.regular,
+                      secondary: true,
+                      onPressed: () => controller.desktopServices.reveal(
+                        controller.jobLogFile(job.id).path,
+                      ),
+                      child: Text(context.l10n.t('showLogFile')),
+                    ),
+                    const SizedBox(width: 8),
+                    PushButton(
+                      controlSize: ControlSize.regular,
+                      color: MacosTheme.of(context).primaryColor,
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: Text(context.l10n.t('close')),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart' show Divider, SelectableText;
 import 'package:macos_ui/macos_ui.dart';
 
 import '../jobs/job_controller.dart';
@@ -24,6 +25,7 @@ final class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _apiKeyController;
   late final TextEditingController _executableController;
   late final TextEditingController _promptController;
+  late final TextEditingController _calibreController;
   var _saving = false;
   var _saved = false;
   bool? _codexAvailable;
@@ -39,6 +41,9 @@ final class _SettingsPageState extends State<SettingsPage> {
     _apiKeyController = TextEditingController();
     _executableController = TextEditingController();
     _promptController = TextEditingController();
+    _calibreController = TextEditingController(
+      text: widget.controller.settings.calibreExecutable,
+    );
     _loadProvider();
   }
 
@@ -49,6 +54,7 @@ final class _SettingsPageState extends State<SettingsPage> {
     _apiKeyController.dispose();
     _executableController.dispose();
     _promptController.dispose();
+    _calibreController.dispose();
     _codexCheckTimer?.cancel();
     super.dispose();
   }
@@ -221,6 +227,69 @@ final class _SettingsPageState extends State<SettingsPage> {
                 ),
               ),
               const SizedBox(height: 22),
+              Divider(color: MacosTheme.of(context).dividerColor),
+              const SizedBox(height: 18),
+              Text(
+                context.l10n.t('formatConversion'),
+                style: MacosTheme.of(context).typography.title3,
+              ),
+              const SizedBox(height: 12),
+              _SettingsRow(
+                label: 'ebook-convert',
+                alignTop: true,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    MacosTextField(
+                      controller: _calibreController,
+                      placeholder: context.l10n.t('automaticDetection'),
+                      onChanged: (_) => setState(() => _saved = false),
+                    ),
+                    const SizedBox(height: 6),
+                    AnimatedBuilder(
+                      animation: widget.controller,
+                      builder: (context, _) {
+                        final installation =
+                            widget.controller.calibreInstallation;
+                        final color = installation == null
+                            ? MacosColors.systemRedColor
+                            : MacosColors.systemGreenColor;
+                        final message = widget.controller.checkingCalibre
+                            ? context.l10n.t('codexChecking')
+                            : installation == null
+                            ? context.l10n.t('calibreMissing')
+                            : '${installation.version} · '
+                                  '${installation.executable}';
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                message,
+                                style: MacosTheme.of(
+                                  context,
+                                ).typography.caption1.copyWith(color: color),
+                              ),
+                            ),
+                            PushButton(
+                              controlSize: ControlSize.small,
+                              secondary: true,
+                              onPressed: widget.controller.checkingCalibre
+                                  ? null
+                                  : widget.controller.refreshCalibre,
+                              child: Text(context.l10n.t('retryDetection')),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    if (widget.controller.calibreInstallation == null) ...[
+                      const SizedBox(height: 5),
+                      const SelectableText('brew install --cask calibre'),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 22),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
@@ -266,7 +335,10 @@ final class _SettingsPageState extends State<SettingsPage> {
         );
     final settings = widget.controller.settings
         .withModel(updatedModel)
-        .copyWith(lastProvider: _provider);
+        .copyWith(
+          lastProvider: _provider,
+          calibreExecutable: _calibreController.text.trim(),
+        );
     await widget.controller.updateSettings(settings);
     if (mounted) {
       setState(() {

@@ -1,10 +1,14 @@
 import '../settings/app_settings.dart';
+import '../ebook/book_format.dart';
 
 enum TranslationJobStatus {
   queued,
+  convertingInput,
   unpacking,
   translating,
   repacking,
+  convertingOutput,
+  paused,
   waitingForAction,
   completed,
   abandoned,
@@ -13,9 +17,12 @@ enum TranslationJobStatus {
 extension TranslationJobStatusLabel on TranslationJobStatus {
   String get label => switch (this) {
     TranslationJobStatus.queued => 'Queued',
+    TranslationJobStatus.convertingInput => 'Converting input',
     TranslationJobStatus.unpacking => 'Unpacking',
     TranslationJobStatus.translating => 'Translating',
     TranslationJobStatus.repacking => 'Repacking',
+    TranslationJobStatus.convertingOutput => 'Converting output',
+    TranslationJobStatus.paused => 'Paused',
     TranslationJobStatus.waitingForAction => 'Needs attention',
     TranslationJobStatus.completed => 'Completed',
     TranslationJobStatus.abandoned => 'Abandoned',
@@ -23,8 +30,10 @@ extension TranslationJobStatusLabel on TranslationJobStatus {
 
   bool get isRunning => switch (this) {
     TranslationJobStatus.unpacking ||
+    TranslationJobStatus.convertingInput ||
     TranslationJobStatus.translating ||
-    TranslationJobStatus.repacking => true,
+    TranslationJobStatus.repacking ||
+    TranslationJobStatus.convertingOutput => true,
     _ => false,
   };
 }
@@ -38,6 +47,7 @@ final class TranslationJob {
     required this.outputDirectoryBookmark,
     required this.targetLanguage,
     required this.keepOriginal,
+    required this.preserveSourceFormat,
     required this.provider,
     required this.createdAt,
     required this.status,
@@ -56,6 +66,7 @@ final class TranslationJob {
     outputDirectoryBookmark: json['output_directory_bookmark'] as String? ?? '',
     targetLanguage: json['target_language'] as String,
     keepOriginal: json['keep_original'] as bool? ?? false,
+    preserveSourceFormat: json['preserve_source_format'] as bool? ?? false,
     provider: _providerFromJson(json),
     createdAt: DateTime.parse(json['created_at'] as String),
     status: TranslationJobStatus.values.byName(json['status'] as String),
@@ -77,6 +88,7 @@ final class TranslationJob {
   final String outputDirectoryBookmark;
   final String targetLanguage;
   final bool keepOriginal;
+  final bool preserveSourceFormat;
   final TranslationProvider provider;
   final DateTime createdAt;
   final TranslationJobStatus status;
@@ -88,6 +100,12 @@ final class TranslationJob {
 
   int get completedUnits => completedUnitIds.length;
 
+  BookFormat get sourceFormat =>
+      BookFormat.fromPath(sourcePath) ?? BookFormat.epub;
+
+  String get outputExtension =>
+      preserveSourceFormat ? sourceFormat.extension : BookFormat.epub.extension;
+
   double get progress =>
       totalUnits == 0 ? 0 : (completedUnits / totalUnits).clamp(0, 1);
 
@@ -97,6 +115,7 @@ final class TranslationJob {
     String? outputDirectory,
     String? outputDirectoryBookmark,
     bool? keepOriginal,
+    bool? preserveSourceFormat,
     TranslationJobStatus? status,
     int? totalUnits,
     Set<String>? completedUnitIds,
@@ -114,6 +133,7 @@ final class TranslationJob {
         outputDirectoryBookmark ?? this.outputDirectoryBookmark,
     targetLanguage: targetLanguage,
     keepOriginal: keepOriginal ?? this.keepOriginal,
+    preserveSourceFormat: preserveSourceFormat ?? this.preserveSourceFormat,
     provider: provider,
     createdAt: createdAt,
     status: status ?? this.status,
@@ -132,6 +152,7 @@ final class TranslationJob {
     'output_directory_bookmark': outputDirectoryBookmark,
     'target_language': targetLanguage,
     'keep_original': keepOriginal,
+    'preserve_source_format': preserveSourceFormat,
     'provider': provider.name,
     'created_at': createdAt.toIso8601String(),
     'status': status.name,

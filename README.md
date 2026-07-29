@@ -4,8 +4,8 @@
   <img src="assets/icon/meow-icon-master.png" width="180" alt="Meow app icon">
 </p>
 
-Meow is a native-feeling macOS application for translating DRM-free ebooks
-with AI. The first supported format is EPUB.
+Meow is a native-feeling macOS application for translating DRM-free EPUB,
+MOBI, and AZW3 ebooks with AI.
 
 The application unpacks an EPUB into an isolated job workspace, streams small
 translation units to a configured engine, stores translations as an overlay,
@@ -13,11 +13,16 @@ and rebuilds a new EPUB without changing the source package in place.
 
 ## Current capabilities
 
-- Drag and drop one or more EPUB files.
+- Drag and drop one or more EPUB, MOBI, or AZW3 files.
 - Remember the output directory, target language, model provider, and whether
   to keep the original text above each translation.
 - Run multiple persistent jobs with progress and failure history.
 - Retry unfinished translation units or abandon a job.
+- Pause and resume jobs without retranslating completed units.
+- Retry only failed units, or explicitly clear and retranslate the whole book.
+- Inspect persistent, redacted, real-time logs for every job.
+- Convert MOBI/AZW3 through a local Calibre installation and optionally export
+  back to the source format.
 - Restore sandbox file access across launches with security-scoped bookmarks.
 - Stream DeepSeek and OpenAI-compatible Chat Completions with cancellation
   and bounded timeouts, or run a locally authenticated Codex CLI process.
@@ -47,6 +52,13 @@ Spanish, Portuguese, and Russian locales are recognized.
 
 - macOS
 - [mise](https://mise.jdx.dev/)
+
+MOBI and AZW3 support requires
+[Calibre](https://calibre-ebook.com/download_osx):
+
+```bash
+brew install --cask calibre
+```
 
 ## Install with Homebrew
 

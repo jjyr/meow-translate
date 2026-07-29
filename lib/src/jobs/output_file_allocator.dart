@@ -10,6 +10,7 @@ final class OutputFileAllocator {
     required String sourcePath,
     required String targetLanguage,
     required String jobId,
+    String outputExtension = '.epub',
   }) async {
     await directory.create(recursive: true);
     final sourceName = path.basenameWithoutExtension(sourcePath);
@@ -17,11 +18,17 @@ final class OutputFileAllocator {
       RegExp(r'[^\w\-\u0080-\uFFFF]+'),
       '-',
     );
+    final extension = outputExtension.startsWith('.')
+        ? outputExtension
+        : '.$outputExtension';
 
     for (var suffix = 1; suffix < 10000; suffix++) {
       final suffixText = suffix == 1 ? '' : ' ($suffix)';
       final output = File(
-        path.join(directory.path, '$sourceName - $language$suffixText.epub'),
+        path.join(
+          directory.path,
+          '$sourceName - $language$suffixText$extension',
+        ),
       );
       final lock = _lockFor(output);
       var createdLock = false;
@@ -113,7 +120,7 @@ final class OutputFileReservation {
 
   Future<File> publish() async {
     if (!await staging.exists()) {
-      throw const FileSystemException('The staged EPUB does not exist.');
+      throw const FileSystemException('The staged output does not exist.');
     }
     if (await output.exists()) {
       throw FileSystemException(

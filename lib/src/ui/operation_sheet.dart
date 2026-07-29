@@ -11,12 +11,14 @@ final class OperationOptions {
     required this.targetLanguage,
     required this.keepOriginal,
     required this.provider,
+    required this.preserveSourceFormat,
   });
 
   final String outputDirectory;
   final String targetLanguage;
   final bool keepOriginal;
   final TranslationProvider provider;
+  final bool preserveSourceFormat;
 }
 
 String rememberedOutputDirectory(AppSettings settings) =>
@@ -28,11 +30,16 @@ Future<OperationOptions?> showOperationSheet({
   required BuildContext context,
   required int fileCount,
   required AppSettings settings,
+  required bool hasConvertibleInput,
 }) {
   return showMacosSheet<OperationOptions>(
     context: context,
     builder: (context) => MacosSheet(
-      child: _OperationSheetContent(fileCount: fileCount, settings: settings),
+      child: _OperationSheetContent(
+        fileCount: fileCount,
+        settings: settings,
+        hasConvertibleInput: hasConvertibleInput,
+      ),
     ),
   );
 }
@@ -41,10 +48,12 @@ final class _OperationSheetContent extends StatefulWidget {
   const _OperationSheetContent({
     required this.fileCount,
     required this.settings,
+    required this.hasConvertibleInput,
   });
 
   final int fileCount;
   final AppSettings settings;
+  final bool hasConvertibleInput;
 
   @override
   State<_OperationSheetContent> createState() => _OperationSheetContentState();
@@ -54,6 +63,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
   late final TextEditingController _outputController;
   late String _targetLanguage;
   late bool _keepOriginal;
+  late bool _preserveSourceFormat;
   late TranslationProvider _provider;
   late bool _requiresOutputReselection;
 
@@ -84,6 +94,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
         widget.settings.outputDirectoryBookmark.isEmpty;
     _targetLanguage = widget.settings.targetLanguage;
     _keepOriginal = rememberedKeepOriginal(widget.settings);
+    _preserveSourceFormat = widget.settings.preserveSourceFormat;
     _provider = widget.settings.lastProvider;
   }
 
@@ -178,11 +189,21 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
             const SizedBox(height: 14),
             _LabeledControl(
               label: context.l10n.t('outputFormat'),
-              child: MacosTextField(
-                controller: TextEditingController(text: 'EPUB'),
-                readOnly: true,
-                enabled: false,
-              ),
+              child: widget.hasConvertibleInput
+                  ? Row(
+                      children: [
+                        MacosCheckbox(
+                          value: _preserveSourceFormat,
+                          onChanged: (value) =>
+                              setState(() => _preserveSourceFormat = value),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(context.l10n.t('preserveSourceFormat')),
+                        ),
+                      ],
+                    )
+                  : const Text('EPUB'),
             ),
             const SizedBox(height: 14),
             _LabeledControl(
@@ -240,6 +261,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
                             outputDirectory: _outputController.text,
                             targetLanguage: _targetLanguage,
                             keepOriginal: _keepOriginal,
+                            preserveSourceFormat: _preserveSourceFormat,
                             provider: _provider,
                           ),
                         ),

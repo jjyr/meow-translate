@@ -1,10 +1,12 @@
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:macos_ui/macos_ui.dart';
-import 'package:path/path.dart' as path;
 
 import '../jobs/job_controller.dart';
+import '../ebook/book_format.dart';
+import '../ebook/calibre_service.dart';
 import '../l10n/app_localizations.dart';
 import 'operation_sheet.dart';
 
@@ -155,39 +157,47 @@ final class _DropPageState extends State<DropPage> {
 
   Future<void> _chooseFiles() async {
     const group = XTypeGroup(
-      label: 'EPUB books',
-      extensions: ['epub'],
-      uniformTypeIdentifiers: ['org.idpf.epub-container'],
+      label: 'Ebooks',
+      extensions: ['epub', 'mobi', 'azw3'],
     );
     final files = await openFiles(acceptedTypeGroups: [group]);
     await _acceptPaths(files.map((file) => file.path).toList());
   }
 
   Future<void> _acceptPaths(List<String> values) async {
-    final epubPaths = values
-        .where((value) => path.extension(value).toLowerCase() == '.epub')
+    final ebookPaths = values
+        .where((value) => BookFormat.fromPath(value) != null)
         .toList(growable: false);
-    if (epubPaths.isEmpty) {
+    if (ebookPaths.isEmpty) {
       setState(() {
         _validationMessage = context.l10n.t('noEpub');
       });
       return;
     }
+    final requiresCalibre = ebookPaths.any(
+      (value) => BookFormat.fromPath(value)?.requiresCalibre ?? false,
+    );
+    if (requiresCalibre && !await _ensureCalibre()) {
+      return;
+    }
+    if (!mounted) return;
     setState(() => _validationMessage = null);
     final options = await showOperationSheet(
       context: context,
-      fileCount: epubPaths.length,
+      fileCount: ebookPaths.length,
       settings: widget.controller.settings,
+      hasConvertibleInput: requiresCalibre,
     );
     if (options == null) {
       return;
     }
     try {
       await widget.controller.enqueue(
-        sourcePaths: epubPaths,
+        sourcePaths: ebookPaths,
         outputDirectory: options.outputDirectory,
         targetLanguage: options.targetLanguage,
         keepOriginal: options.keepOriginal,
+        preserveSourceFormat: options.preserveSourceFormat,
         provider: options.provider,
       );
     } on Object catch (error) {
@@ -202,4 +212,57 @@ final class _DropPageState extends State<DropPage> {
     }
     widget.onShowJobs();
   }
+
+  Future<bool> _ensureCalibre() async {
+    await widget.controller.refreshCalibre();
+    if (!mounted) return false;
+    while (widget.controller.calibreInstallation == null) {
+      final action = await _showMissingCalibreDialog();
+      if (!mounted) return false;
+      if (action == null || action == _CalibreAction.cancel) return false;
+      if (action == _CalibreAction.retry) {
+        await widget.controller.refreshCalibre();
+        if (!mounted) return false;
+      }
+    }
+    return mounted;
+  }
+
+  Future<_CalibreAction?> _showMissingCalibreDialog() {
+    return showCupertinoDialog<_CalibreAction>(
+      context: context,
+      builder: (context) => CupertinoAlertDialog(
+        title: Text(context.l10n.t('calibreRequired')),
+        content: Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            '${context.l10n.t('calibreInstallHelp')}\n\n'
+            '${CalibreService.installCommand}',
+          ),
+        ),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(context).pop(_CalibreAction.cancel),
+            child: Text(context.l10n.t('cancel')),
+          ),
+          CupertinoDialogAction(
+            onPressed: () {
+              Clipboard.setData(
+                const ClipboardData(text: CalibreService.installCommand),
+              );
+              Navigator.of(context).pop(_CalibreAction.copy);
+            },
+            child: Text(context.l10n.t('copyCommand')),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(context).pop(_CalibreAction.retry),
+            child: Text(context.l10n.t('retryDetection')),
+          ),
+        ],
+      ),
+    );
+  }
 }
+
+enum _CalibreAction { cancel, copy, retry }

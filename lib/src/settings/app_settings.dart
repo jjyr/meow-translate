@@ -111,6 +111,8 @@ final class AppSettings {
     required this.outputDirectoryBookmark,
     required this.targetLanguage,
     required this.keepOriginal,
+    required this.preserveSourceFormat,
+    required this.calibreExecutable,
     required this.lastProvider,
     required this.models,
   });
@@ -120,6 +122,8 @@ final class AppSettings {
     outputDirectoryBookmark: '',
     targetLanguage: 'Simplified Chinese',
     keepOriginal: false,
+    preserveSourceFormat: false,
+    calibreExecutable: '',
     lastProvider: TranslationProvider.deepseek,
     models: {
       for (final provider in TranslationProvider.values)
@@ -146,6 +150,11 @@ final class AppSettings {
       targetLanguage:
           json['target_language'] as String? ?? defaults.targetLanguage,
       keepOriginal: json['keep_original'] as bool? ?? defaults.keepOriginal,
+      preserveSourceFormat:
+          json['preserve_source_format'] as bool? ??
+          defaults.preserveSourceFormat,
+      calibreExecutable:
+          json['calibre_executable'] as String? ?? defaults.calibreExecutable,
       lastProvider: TranslationProvider.values.byName(
         json['last_provider'] as String? ?? defaults.lastProvider.name,
       ),
@@ -157,6 +166,8 @@ final class AppSettings {
   final String outputDirectoryBookmark;
   final String targetLanguage;
   final bool keepOriginal;
+  final bool preserveSourceFormat;
+  final String calibreExecutable;
   final TranslationProvider lastProvider;
   final Map<TranslationProvider, ModelSettings> models;
 
@@ -168,6 +179,8 @@ final class AppSettings {
     String? outputDirectoryBookmark,
     String? targetLanguage,
     bool? keepOriginal,
+    bool? preserveSourceFormat,
+    String? calibreExecutable,
     TranslationProvider? lastProvider,
     Map<TranslationProvider, ModelSettings>? models,
   }) => AppSettings(
@@ -176,6 +189,8 @@ final class AppSettings {
         outputDirectoryBookmark ?? this.outputDirectoryBookmark,
     targetLanguage: targetLanguage ?? this.targetLanguage,
     keepOriginal: keepOriginal ?? this.keepOriginal,
+    preserveSourceFormat: preserveSourceFormat ?? this.preserveSourceFormat,
+    calibreExecutable: calibreExecutable ?? this.calibreExecutable,
     lastProvider: lastProvider ?? this.lastProvider,
     models: models ?? this.models,
   );
@@ -184,11 +199,13 @@ final class AppSettings {
       copyWith(models: {...models, modelSettings.provider: modelSettings});
 
   Map<String, Object> toJson() => {
-    'version': 4,
+    'version': 5,
     'output_directory': outputDirectory,
     'output_directory_bookmark': outputDirectoryBookmark,
     'target_language': targetLanguage,
     'keep_original': keepOriginal,
+    'preserve_source_format': preserveSourceFormat,
+    'calibre_executable': calibreExecutable,
     'last_provider': lastProvider.name,
     'models': {
       for (final entry in models.entries) entry.key.name: entry.value.toJson(),

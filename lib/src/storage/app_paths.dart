@@ -25,6 +25,12 @@ final class AppPaths {
 
   File get jobsFile => File(path.join(supportDirectory.path, 'jobs.json'));
 
+  Directory get jobLogsDirectory =>
+      Directory(path.join(supportDirectory.path, 'logs'));
+
+  File jobLogFor(String jobId) =>
+      File(path.join(jobLogsDirectory.path, '$jobId.jsonl'));
+
   Directory get workspacesDirectory =>
       Directory(path.join(supportDirectory.path, 'workspaces'));
 
