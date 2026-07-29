@@ -1,0 +1,42 @@
+[tools]
+flutter = "3.38.9"
+
+[tasks.bootstrap]
+description = "Resolve Flutter dependencies"
+run = "flutter pub get"
+
+[tasks.format]
+description = "Format Dart sources"
+run = "dart format lib test"
+
+[tasks.format-check]
+description = "Check Dart formatting"
+run = "dart format --output=none --set-exit-if-changed lib test"
+
+[tasks.analyze]
+description = "Run Flutter static analysis"
+run = "flutter analyze"
+
+[tasks.test]
+description = "Run deterministic tests"
+run = "flutter test --exclude-tags=real-epub"
+
+[tasks.test-real]
+description = "Run the opt-in real EPUB round-trip test"
+run = "flutter test --tags=real-epub test/epub/real_epub_round_trip_test.dart"
+
+[tasks.run]
+description = "Run the macOS application"
+run = "flutter run -d macos"
+
+[tasks.build]
+description = "Build the macOS application"
+run = "flutter build macos"
+
+[tasks.check]
+description = "Run all deterministic verification"
+run = [
+  "dart format --output=none --set-exit-if-changed lib test",
+  "flutter analyze",
+  "flutter test --exclude-tags=real-epub",
+]
