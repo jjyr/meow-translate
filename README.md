@@ -48,6 +48,22 @@ Spanish, Portuguese, and Russian locales are recognized.
 - macOS
 - [mise](https://mise.jdx.dev/)
 
+## Install with Homebrew
+
+The app is not Apple-notarized. The Homebrew cask clears the macOS quarantine
+attribute after installation:
+
+```bash
+brew tap jjyr/tap
+brew install --cask meow
+```
+
+Upgrade to the latest release with:
+
+```bash
+brew upgrade --cask meow
+```
+
 The repository pins Flutter 3.38.9 in `mise.toml`.
 
 ```sh
