@@ -124,7 +124,7 @@ final class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 16),
               _SettingsRow(
-                label: 'Prompt',
+                label: 'Translation guidance',
                 alignTop: true,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

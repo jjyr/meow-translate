@@ -43,13 +43,20 @@ final class ModelSettings {
     };
   }
 
-  factory ModelSettings.fromJson(Map<String, dynamic> json) => ModelSettings(
-    provider: TranslationProvider.values.byName(json['provider'] as String),
-    baseUrl: json['base_url'] as String,
-    model: json['model'] as String,
-    apiKey: json['api_key'] as String,
-    prompt: json['prompt'] as String,
-  );
+  factory ModelSettings.fromJson(Map<String, dynamic> json) {
+    final provider = TranslationProvider.values.byName(
+      json['provider'] as String,
+    );
+    return ModelSettings(
+      provider: provider,
+      baseUrl: json['base_url'] as String,
+      model: json['model'] as String,
+      apiKey: json['api_key'] as String,
+      prompt:
+          json['translation_guidance'] as String? ??
+          ModelSettings.defaults(provider).prompt,
+    );
+  }
 
   final TranslationProvider provider;
   final String baseUrl;
@@ -75,7 +82,7 @@ final class ModelSettings {
     'base_url': baseUrl,
     'model': model,
     'api_key': apiKey,
-    'prompt': prompt,
+    'translation_guidance': prompt,
   };
 }
 
@@ -158,7 +165,7 @@ final class AppSettings {
       copyWith(models: {...models, modelSettings.provider: modelSettings});
 
   Map<String, Object> toJson() => {
-    'version': 2,
+    'version': 3,
     'output_directory': outputDirectory,
     'output_directory_bookmark': outputDirectoryBookmark,
     'target_language': targetLanguage,

@@ -32,15 +32,15 @@ final class _RootWindowState extends State<RootWindow> {
           onChanged: (value) => setState(() => _pageIndex = value),
           items: const [
             SidebarItem(
-              leading: MacosIcon(CupertinoIcons.add_circled),
+              leading: MacosIcon(CupertinoIcons.book),
               label: Text('Translate'),
             ),
             SidebarItem(
-              leading: MacosIcon(CupertinoIcons.clock),
+              leading: MacosIcon(CupertinoIcons.list_bullet),
               label: Text('Jobs'),
             ),
             SidebarItem(
-              leading: MacosIcon(CupertinoIcons.settings),
+              leading: MacosIcon(CupertinoIcons.gear),
               label: Text('Settings'),
             ),
           ],

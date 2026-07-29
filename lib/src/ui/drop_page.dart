@@ -81,7 +81,7 @@ final class _DropPageState extends State<DropPage> {
                                     shape: BoxShape.circle,
                                   ),
                                   child: MacosIcon(
-                                    CupertinoIcons.add,
+                                    CupertinoIcons.tray_arrow_down,
                                     size: 36,
                                     color: MacosTheme.of(context).primaryColor,
                                   ),

@@ -152,10 +152,10 @@ final class _JobCard extends StatelessWidget {
     TranslationJobStatus.queued => CupertinoIcons.clock,
     TranslationJobStatus.unpacking => CupertinoIcons.archivebox,
     TranslationJobStatus.translating => CupertinoIcons.text_bubble,
-    TranslationJobStatus.repacking => CupertinoIcons.square_arrow_down,
+    TranslationJobStatus.repacking => CupertinoIcons.archivebox_fill,
     TranslationJobStatus.waitingForAction =>
       CupertinoIcons.exclamationmark_triangle,
-    TranslationJobStatus.completed => CupertinoIcons.check_mark_circled,
+    TranslationJobStatus.completed => CupertinoIcons.check_mark_circled_solid,
     TranslationJobStatus.abandoned => CupertinoIcons.xmark_circle,
   };
 
