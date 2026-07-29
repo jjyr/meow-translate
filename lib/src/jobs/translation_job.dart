@@ -148,12 +148,5 @@ TranslationProvider _providerFromJson(Map<String, dynamic> json) {
   if (provider is String) {
     return TranslationProvider.values.byName(provider);
   }
-  final legacySettings = json['model_settings'];
-  if (legacySettings is Map<String, dynamic> &&
-      legacySettings['provider'] is String) {
-    return TranslationProvider.values.byName(
-      legacySettings['provider'] as String,
-    );
-  }
   return TranslationProvider.deepseek;
 }

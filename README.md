@@ -8,8 +8,8 @@ Meow is a native-feeling macOS application for translating DRM-free ebooks
 with AI. The first supported format is EPUB.
 
 The application unpacks an EPUB into an isolated job workspace, streams small
-translation units to DeepSeek or Codex, stores translations as an overlay, and
-rebuilds a new EPUB without changing the source package in place.
+translation units to a configured engine, stores translations as an overlay,
+and rebuilds a new EPUB without changing the source package in place.
 
 ## Current capabilities
 
@@ -19,8 +19,8 @@ rebuilds a new EPUB without changing the source package in place.
 - Run multiple persistent jobs with progress and failure history.
 - Retry unfinished translation units or abandon a job.
 - Restore sandbox file access across launches with security-scoped bookmarks.
-- Stream DeepSeek Chat Completions and OpenAI Responses API output with
-  cancellation and bounded timeouts.
+- Stream DeepSeek and OpenAI-compatible Chat Completions with cancellation
+  and bounded timeouts, or run a locally authenticated Codex CLI process.
 - Send one plain-text unit per model request and keep response formatting,
   identifiers, and transcript JSON under program control.
 - Store model configuration, including API keys, in a plain JSON file.
@@ -30,6 +30,18 @@ rebuilds a new EPUB without changing the source package in place.
   clones omit `id` and `xml:id` attributes to avoid duplicate identifiers.
 - Verify no-op EPUB round trips against both generated fixtures and opt-in real
   books.
+
+## Translation engines and languages
+
+- **Codex CLI** runs the locally installed `codex` executable with
+  `codex exec --model <model>`. It uses the local Codex login, not an API key.
+- **OpenAI Compatible API** uses the streaming
+  `POST /v1/chat/completions` protocol with a custom base URL, model, and key.
+- **DeepSeek** is a preconfigured OpenAI-compatible provider.
+
+The interface follows the current system locale and falls back to English.
+English, Simplified and Traditional Chinese, Japanese, Korean, German, French,
+Spanish, Portuguese, and Russian locales are recognized.
 
 ## Requirements
 

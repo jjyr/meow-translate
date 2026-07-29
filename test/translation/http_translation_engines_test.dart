@@ -68,13 +68,10 @@ void main() {
     );
   });
 
-  test('Codex engine parses Responses API output text events', () async {
+  test('OpenAI-compatible engine uses chat completions', () async {
     const translation = '你好';
-    final client = _SseClient([
-      'data: ${jsonEncode({'type': 'response.output_text.delta', 'delta': translation})}',
-      'data: ${jsonEncode({'type': 'response.completed'})}',
-    ]);
-    final engine = CodexTranslationEngine(
+    final client = _SseClient([_deepSeekDelta(translation), 'data: [DONE]']);
+    final engine = OpenAiCompatibleTranslationEngine(
       baseUrl: 'https://api.openai.test/v1',
       apiKey: 'secret',
       model: 'codex-mini-latest',
@@ -88,14 +85,14 @@ void main() {
       events.whereType<TranslationCompleted>().single.unit.text,
       translation,
     );
-    expect(client.request.url.toString(), endsWith('/v1/responses'));
+    expect(client.request.url.toString(), endsWith('/v1/chat/completions'));
     final body = jsonDecode(client.request.body) as Map<String, dynamic>;
-    expect(body['instructions'], contains('Translate.'));
+    final messages = body['messages'] as List<dynamic>;
     expect(
-      body['instructions'],
+      (messages.first as Map<String, dynamic>)['content'],
       contains('Return only the translated plain text'),
     );
-    expect(body['input'], unit.sourceText);
+    expect((messages.last as Map<String, dynamic>)['content'], unit.sourceText);
     expect(body['stream'], isTrue);
   });
 

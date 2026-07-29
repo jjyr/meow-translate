@@ -5,6 +5,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:path/path.dart' as path;
 
 import '../jobs/job_controller.dart';
+import '../l10n/app_localizations.dart';
 import 'operation_sheet.dart';
 
 final class DropPage extends StatefulWidget {
@@ -28,7 +29,7 @@ final class _DropPageState extends State<DropPage> {
   @override
   Widget build(BuildContext context) {
     return MacosScaffold(
-      toolBar: const ToolBar(title: Text('Translate')),
+      toolBar: ToolBar(title: Text(context.l10n.t('translate'))),
       children: [
         ContentArea(
           builder: (context, scrollController) => AnimatedBuilder(
@@ -89,15 +90,15 @@ final class _DropPageState extends State<DropPage> {
                                 const SizedBox(height: 20),
                                 Text(
                                   _dragging
-                                      ? 'Drop to add books'
-                                      : 'Drop EPUB books here',
+                                      ? context.l10n.t('dropAdd')
+                                      : context.l10n.t('dropBooks'),
                                   style: MacosTheme.of(
                                     context,
                                   ).typography.title2,
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  'or click to choose one or more files',
+                                  context.l10n.t('clickChoose'),
                                   style: MacosTheme.of(
                                     context,
                                   ).typography.subheadline,
@@ -126,7 +127,7 @@ final class _DropPageState extends State<DropPage> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'EPUB 2 and EPUB 3 · DRM-free books only',
+                        context.l10n.t('epubOnly'),
                         style: MacosTheme.of(context).typography.caption1,
                       ),
                       if (widget.controller.jobs.isNotEmpty)
@@ -136,7 +137,7 @@ final class _DropPageState extends State<DropPage> {
                           onPressed: widget.onShowJobs,
                           child: Text(
                             widget.controller.runningJobCount == 0
-                                ? 'View jobs'
+                                ? context.l10n.t('viewJobs')
                                 : '${widget.controller.runningJobCount} '
                                       'running · View jobs',
                           ),
@@ -168,7 +169,7 @@ final class _DropPageState extends State<DropPage> {
         .toList(growable: false);
     if (epubPaths.isEmpty) {
       setState(() {
-        _validationMessage = 'No supported EPUB files were selected.';
+        _validationMessage = context.l10n.t('noEpub');
       });
       return;
     }

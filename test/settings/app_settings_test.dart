@@ -29,7 +29,7 @@ void main() {
     final deepSeek = models['deepseek'] as Map<String, Object>;
     final restored = AppSettings.fromJson(json);
 
-    expect(json['version'], 3);
+    expect(json['version'], 4);
     expect(deepSeek['translation_guidance'], 'Keep the prose concise.');
     expect(deepSeek.containsKey('prompt'), isFalse);
     expect(

@@ -6,36 +6,13 @@ void main() {
   test('job persistence omits model credentials', () {
     final json = _job().toJson();
 
-    expect(json['provider'], 'codex');
+    expect(json['provider'], 'codexCli');
     expect(json['source_bookmark'], 'source-bookmark');
     expect(json['output_directory_bookmark'], 'output-bookmark');
     expect(json['keep_original'], isTrue);
     expect(json.toString(), isNot(contains('api_key')));
     expect(json.toString(), isNot(contains('secret')));
   });
-
-  test(
-    'legacy model settings migrate provider without retaining credentials',
-    () {
-      final legacy = _job().toJson()
-        ..remove('provider')
-        ..['model_settings'] = {
-          'provider': 'deepseek',
-          'base_url': 'https://example.test',
-          'model': 'model',
-          'api_key': 'legacy-secret',
-          'prompt': 'Translate.',
-        };
-
-      final migrated = TranslationJob.fromJson(legacy);
-      final persisted = migrated.toJson();
-
-      expect(migrated.provider, TranslationProvider.deepseek);
-      expect(persisted['provider'], 'deepseek');
-      expect(persisted.toString(), isNot(contains('legacy-secret')));
-      expect(persisted.containsKey('model_settings'), isFalse);
-    },
-  );
 
   test('legacy jobs default to translated-only output', () {
     final legacy = _job().toJson()..remove('keep_original');
@@ -52,7 +29,7 @@ TranslationJob _job() => TranslationJob(
   outputDirectoryBookmark: 'output-bookmark',
   targetLanguage: 'Simplified Chinese',
   keepOriginal: true,
-  provider: TranslationProvider.codex,
+  provider: TranslationProvider.codexCli,
   createdAt: DateTime.utc(2026),
   status: TranslationJobStatus.queued,
   totalUnits: 2,

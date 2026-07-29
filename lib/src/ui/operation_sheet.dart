@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../settings/app_settings.dart';
+import '../l10n/app_localizations.dart';
 
 final class OperationOptions {
   const OperationOptions({
@@ -65,6 +66,11 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
     'French',
     'German',
     'Spanish',
+    'Portuguese',
+    'Italian',
+    'Russian',
+    'Arabic',
+    'Hindi',
   ];
 
   @override
@@ -104,19 +110,19 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
             ),
             const SizedBox(height: 6),
             Text(
-              'These options will be remembered for the next job.',
+              context.l10n.t('remembered'),
               style: MacosTheme.of(context).typography.subheadline,
             ),
             const SizedBox(height: 24),
             _LabeledControl(
-              label: 'Output folder',
+              label: context.l10n.t('outputFolder'),
               child: Row(
                 children: [
                   Expanded(
                     child: MacosTextField(
                       controller: _outputController,
                       readOnly: true,
-                      placeholder: 'Choose a folder',
+                      placeholder: context.l10n.t('chooseFolder'),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -136,7 +142,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
                         });
                       }
                     },
-                    child: const Text('Choose…'),
+                    child: Text(context.l10n.t('choose')),
                   ),
                 ],
               ),
@@ -146,7 +152,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
               Padding(
                 padding: const EdgeInsets.only(left: 130),
                 child: Text(
-                  'Choose the output folder again to restore macOS access.',
+                  context.l10n.t('accessAgain'),
                   style: MacosTheme.of(context).typography.caption1.copyWith(
                     color: MacosColors.systemOrangeColor,
                   ),
@@ -155,7 +161,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
             ],
             const SizedBox(height: 14),
             _LabeledControl(
-              label: 'Target language',
+              label: context.l10n.t('targetLanguage'),
               child: MacosPopupButton<String>(
                 value: _targetLanguage,
                 items: [
@@ -171,7 +177,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
             ),
             const SizedBox(height: 14),
             _LabeledControl(
-              label: 'Output format',
+              label: context.l10n.t('outputFormat'),
               child: MacosTextField(
                 controller: TextEditingController(text: 'EPUB'),
                 readOnly: true,
@@ -180,7 +186,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
             ),
             const SizedBox(height: 14),
             _LabeledControl(
-              label: 'Bilingual output',
+              label: context.l10n.t('bilingual'),
               child: Row(
                 children: [
                   MacosCheckbox(
@@ -190,15 +196,13 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
                     },
                   ),
                   const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text('Keep original text above the translation'),
-                  ),
+                  Expanded(child: Text(context.l10n.t('keepOriginal'))),
                 ],
               ),
             ),
             const SizedBox(height: 14),
             _LabeledControl(
-              label: 'Model',
+              label: context.l10n.t('model'),
               child: MacosPopupButton<TranslationProvider>(
                 value: _provider,
                 items: [
@@ -223,7 +227,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
                   controlSize: ControlSize.large,
                   secondary: true,
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
+                  child: Text(context.l10n.t('cancel')),
                 ),
                 const SizedBox(width: 10),
                 PushButton(
@@ -239,7 +243,7 @@ final class _OperationSheetContentState extends State<_OperationSheetContent> {
                             provider: _provider,
                           ),
                         ),
-                  child: const Text('Start'),
+                  child: Text(context.l10n.t('start')),
                 ),
               ],
             ),

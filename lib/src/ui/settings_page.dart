@@ -1,7 +1,11 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../jobs/job_controller.dart';
+import '../l10n/app_localizations.dart';
 import '../settings/app_settings.dart';
 
 final class SettingsPage extends StatefulWidget {
@@ -18,9 +22,13 @@ final class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _baseUrlController;
   late final TextEditingController _modelController;
   late final TextEditingController _apiKeyController;
+  late final TextEditingController _executableController;
   late final TextEditingController _promptController;
   var _saving = false;
   var _saved = false;
+  bool? _codexAvailable;
+  Timer? _codexCheckTimer;
+  var _codexCheckGeneration = 0;
 
   @override
   void initState() {
@@ -29,6 +37,7 @@ final class _SettingsPageState extends State<SettingsPage> {
     _baseUrlController = TextEditingController();
     _modelController = TextEditingController();
     _apiKeyController = TextEditingController();
+    _executableController = TextEditingController();
     _promptController = TextEditingController();
     _loadProvider();
   }
@@ -38,7 +47,9 @@ final class _SettingsPageState extends State<SettingsPage> {
     _baseUrlController.dispose();
     _modelController.dispose();
     _apiKeyController.dispose();
+    _executableController.dispose();
     _promptController.dispose();
+    _codexCheckTimer?.cancel();
     super.dispose();
   }
 
@@ -47,14 +58,41 @@ final class _SettingsPageState extends State<SettingsPage> {
     _baseUrlController.text = model.baseUrl;
     _modelController.text = model.model;
     _apiKeyController.text = model.apiKey;
+    _executableController.text = model.executable;
     _promptController.text = model.prompt;
     _saved = false;
+    if (_provider == TranslationProvider.codexCli) {
+      _scheduleCodexCheck();
+    }
+  }
+
+  void _scheduleCodexCheck() {
+    _codexCheckTimer?.cancel();
+    _codexAvailable = null;
+    final generation = ++_codexCheckGeneration;
+    _codexCheckTimer = Timer(const Duration(milliseconds: 250), () async {
+      final executable = _executableController.text.trim();
+      var available = false;
+      if (executable.isNotEmpty) {
+        try {
+          final result = await Process.run(executable, [
+            '--version',
+          ]).timeout(const Duration(seconds: 3));
+          available = result.exitCode == 0;
+        } on Object {
+          available = false;
+        }
+      }
+      if (mounted && generation == _codexCheckGeneration) {
+        setState(() => _codexAvailable = available);
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return MacosScaffold(
-      toolBar: const ToolBar(title: Text('Settings')),
+      toolBar: ToolBar(title: Text(context.l10n.t('settings'))),
       children: [
         ContentArea(
           builder: (context, scrollController) => ListView(
@@ -62,18 +100,19 @@ final class _SettingsPageState extends State<SettingsPage> {
             padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 28),
             children: [
               Text(
-                'Translation model',
+                context.l10n.t('translationModel'),
                 style: MacosTheme.of(context).typography.title2,
               ),
               const SizedBox(height: 6),
               Text(
-                'API keys are stored as plain text in Meow’s configuration '
-                'file with owner-only permissions.',
+                _provider == TranslationProvider.codexCli
+                    ? context.l10n.t('cliNote')
+                    : context.l10n.t('secretNote'),
                 style: MacosTheme.of(context).typography.subheadline,
               ),
               const SizedBox(height: 28),
               _SettingsRow(
-                label: 'Provider',
+                label: context.l10n.t('provider'),
                 child: MacosPopupButton<TranslationProvider>(
                   value: _provider,
                   items: [
@@ -94,37 +133,74 @@ final class _SettingsPageState extends State<SettingsPage> {
                   },
                 ),
               ),
-              const SizedBox(height: 16),
-              _SettingsRow(
-                label: 'Base URL',
-                child: MacosTextField(
-                  controller: _baseUrlController,
-                  placeholder: 'https://api.example.com/v1',
-                  onChanged: (_) => setState(() => _saved = false),
+              if (_provider == TranslationProvider.codexCli) ...[
+                const SizedBox(height: 16),
+                _SettingsRow(
+                  label: context.l10n.t('executable'),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: MacosTextField(
+                          controller: _executableController,
+                          placeholder: 'codex',
+                          onChanged: (_) {
+                            setState(() => _saved = false);
+                            _scheduleCodexCheck();
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      if (_codexAvailable == null)
+                        Text(
+                          context.l10n.t('codexChecking'),
+                          style: MacosTheme.of(context).typography.caption1,
+                        )
+                      else if (!_codexAvailable!)
+                        Flexible(
+                          child: Text(
+                            context.l10n.t('codexMissing'),
+                            style: MacosTheme.of(context).typography.caption1
+                                .copyWith(color: MacosColors.systemRedColor),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
+              ] else ...[
+                const SizedBox(height: 16),
+                _SettingsRow(
+                  label: context.l10n.t('baseUrl'),
+                  child: MacosTextField(
+                    controller: _baseUrlController,
+                    placeholder: 'https://api.example.com/v1',
+                    onChanged: (_) => setState(() => _saved = false),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               _SettingsRow(
-                label: 'Model',
+                label: context.l10n.t('model'),
                 child: MacosTextField(
                   controller: _modelController,
                   placeholder: 'Model name',
                   onChanged: (_) => setState(() => _saved = false),
                 ),
               ),
-              const SizedBox(height: 16),
-              _SettingsRow(
-                label: 'API key',
-                child: MacosTextField(
-                  controller: _apiKeyController,
-                  placeholder: 'API key',
-                  obscureText: true,
-                  onChanged: (_) => setState(() => _saved = false),
+              if (_provider != TranslationProvider.codexCli) ...[
+                const SizedBox(height: 16),
+                _SettingsRow(
+                  label: context.l10n.t('apiKey'),
+                  child: MacosTextField(
+                    controller: _apiKeyController,
+                    placeholder: context.l10n.t('apiKey'),
+                    obscureText: true,
+                    onChanged: (_) => setState(() => _saved = false),
+                  ),
                 ),
-              ),
+              ],
               const SizedBox(height: 16),
               _SettingsRow(
-                label: 'Translation guidance',
+                label: context.l10n.t('guidance'),
                 alignTop: true,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -138,7 +214,7 @@ final class _SettingsPageState extends State<SettingsPage> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Meow always sends one unit and accepts plain text only.',
+                      context.l10n.t('plainText'),
                       style: MacosTheme.of(context).typography.caption1,
                     ),
                   ],
@@ -152,7 +228,7 @@ final class _SettingsPageState extends State<SettingsPage> {
                     Padding(
                       padding: const EdgeInsets.only(right: 12),
                       child: Text(
-                        'Saved',
+                        context.l10n.t('saved'),
                         style: MacosTheme.of(context).typography.subheadline
                             .copyWith(color: MacosColors.systemGreenColor),
                       ),
@@ -163,7 +239,7 @@ final class _SettingsPageState extends State<SettingsPage> {
                     onPressed: _saving ? null : _save,
                     child: _saving
                         ? const ProgressCircle(radius: 7)
-                        : const Text('Save'),
+                        : Text(context.l10n.t('save')),
                   ),
                 ],
               ),
@@ -185,6 +261,7 @@ final class _SettingsPageState extends State<SettingsPage> {
           baseUrl: _baseUrlController.text.trim(),
           model: _modelController.text.trim(),
           apiKey: _apiKeyController.text.trim(),
+          executable: _executableController.text.trim(),
           prompt: _promptController.text,
         );
     final settings = widget.controller.settings

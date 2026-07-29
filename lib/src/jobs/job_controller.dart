@@ -12,6 +12,7 @@ import '../settings/app_settings.dart';
 import '../settings/settings_repository.dart';
 import '../storage/app_paths.dart';
 import '../translation/http_translation_engines.dart';
+import '../translation/codex_cli_translation_engine.dart';
 import '../translation/translation_engine.dart';
 import '../translation/translation_models.dart';
 import 'job_repository.dart';
@@ -33,7 +34,7 @@ final class JobController extends ChangeNotifier {
     TranslationEngineFactory? translationEngineFactory,
   }) : _codec = codec ?? const EpubCodec(),
        _translationEngineFactory =
-           translationEngineFactory ?? createHttpTranslationEngine;
+           translationEngineFactory ?? createTranslationEngine;
 
   final AppPaths paths;
   final SettingsRepository settingsRepository;
@@ -735,16 +736,20 @@ extension<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
 
-TranslationEngine createHttpTranslationEngine(ModelSettings modelSettings) {
+TranslationEngine createTranslationEngine(ModelSettings modelSettings) {
   return switch (modelSettings.provider) {
     TranslationProvider.deepseek => DeepSeekTranslationEngine(
       baseUrl: modelSettings.baseUrl,
       apiKey: modelSettings.apiKey,
       model: modelSettings.model,
     ),
-    TranslationProvider.codex => CodexTranslationEngine(
+    TranslationProvider.openAiCompatible => OpenAiCompatibleTranslationEngine(
       baseUrl: modelSettings.baseUrl,
       apiKey: modelSettings.apiKey,
+      model: modelSettings.model,
+    ),
+    TranslationProvider.codexCli => CodexCliTranslationEngine(
+      executable: modelSettings.executable,
       model: modelSettings.model,
     ),
   };

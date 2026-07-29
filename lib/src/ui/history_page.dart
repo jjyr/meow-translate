@@ -3,6 +3,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:path/path.dart' as path;
 
 import '../jobs/job_controller.dart';
+import '../l10n/app_localizations.dart';
 import '../jobs/translation_job.dart';
 import '../settings/app_settings.dart';
 
@@ -14,7 +15,7 @@ final class HistoryPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MacosScaffold(
-      toolBar: const ToolBar(title: Text('Jobs')),
+      toolBar: ToolBar(title: Text(context.l10n.t('jobs'))),
       children: [
         ContentArea(
           builder: (context, scrollController) => AnimatedBuilder(
@@ -23,7 +24,7 @@ final class HistoryPage extends StatelessWidget {
               if (controller.jobs.isEmpty) {
                 return Center(
                   child: Text(
-                    'No translation jobs yet.',
+                    context.l10n.t('noJobs'),
                     style: MacosTheme.of(context).typography.title3,
                   ),
                 );
@@ -182,14 +183,14 @@ final class _JobActions extends StatelessWidget {
             controlSize: ControlSize.regular,
             secondary: true,
             onPressed: () => controller.abandon(job.id),
-            child: const Text('Abandon'),
+            child: Text(context.l10n.t('abandon')),
           ),
           const SizedBox(width: 8),
           PushButton(
             controlSize: ControlSize.regular,
             color: MacosTheme.of(context).primaryColor,
             onPressed: () => controller.retry(job.id),
-            child: const Text('Retry failed'),
+            child: Text(context.l10n.t('retry')),
           ),
         ],
       );
@@ -200,7 +201,7 @@ final class _JobActions extends StatelessWidget {
         controlSize: ControlSize.regular,
         secondary: true,
         onPressed: () => controller.desktopServices.reveal(job.outputPath!),
-        child: const Text('Show in Finder'),
+        child: Text(context.l10n.t('showFinder')),
       );
     }
     if (job.status.isRunning || job.status == TranslationJobStatus.queued) {
@@ -208,7 +209,7 @@ final class _JobActions extends StatelessWidget {
         controlSize: ControlSize.regular,
         secondary: true,
         onPressed: () => controller.abandon(job.id),
-        child: const Text('Cancel'),
+        child: Text(context.l10n.t('cancel')),
       );
     }
     return const SizedBox.shrink();

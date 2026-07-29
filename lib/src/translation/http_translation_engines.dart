@@ -193,8 +193,8 @@ Do not return JSON, identifiers, labels, commentary, quotes, or Markdown fences.
   }
 }
 
-final class DeepSeekTranslationEngine extends HttpTranslationEngine {
-  DeepSeekTranslationEngine({
+base class OpenAiCompatibleTranslationEngine extends HttpTranslationEngine {
+  OpenAiCompatibleTranslationEngine({
     required super.baseUrl,
     required super.apiKey,
     required super.model,
@@ -204,7 +204,7 @@ final class DeepSeekTranslationEngine extends HttpTranslationEngine {
   });
 
   @override
-  String get id => 'deepseek';
+  String get id => 'open_ai_compatible';
 
   @override
   Stream<TranslationEvent> translate(TranslationRequest request) async* {
@@ -264,8 +264,9 @@ final class DeepSeekTranslationEngine extends HttpTranslationEngine {
   }
 }
 
-final class CodexTranslationEngine extends HttpTranslationEngine {
-  CodexTranslationEngine({
+final class DeepSeekTranslationEngine
+    extends OpenAiCompatibleTranslationEngine {
+  DeepSeekTranslationEngine({
     required super.baseUrl,
     required super.apiKey,
     required super.model,
@@ -275,55 +276,5 @@ final class CodexTranslationEngine extends HttpTranslationEngine {
   });
 
   @override
-  String get id => 'codex';
-
-  @override
-  Stream<TranslationEvent> translate(TranslationRequest request) async* {
-    try {
-      final response = await send(endpoint('responses'), {
-        'model': model,
-        'stream': true,
-        'instructions': buildInstructions(request),
-        'input': buildInput(request),
-      }, request.cancellationToken);
-
-      final buffer = StringBuffer();
-      await for (final line in monitor(
-        response,
-        request.cancellationToken,
-      ).transform(utf8.decoder).transform(const LineSplitter())) {
-        request.cancellationToken.throwIfCancelled();
-        if (!line.startsWith('data:')) {
-          continue;
-        }
-        final data = line.substring(5).trim();
-        if (data.isEmpty || data == '[DONE]') {
-          continue;
-        }
-        final event = jsonDecode(data);
-        if (event is! Map<String, dynamic>) {
-          continue;
-        }
-        if (event['type'] == 'response.output_text.delta' &&
-            event['delta'] is String) {
-          final text = event['delta'] as String;
-          buffer.write(text);
-          yield TranslationDelta(text);
-        }
-        if (event['type'] == 'error') {
-          throw TranslationEngineException(
-            event['message']?.toString() ?? 'The Responses API failed.',
-          );
-        }
-      }
-      yield TranslationCompleted(parseResult(buffer.toString(), request));
-    } catch (error) {
-      if (request.cancellationToken.isCancelled ||
-          error is TranslationCancelledException) {
-        yield const TranslationCancelled();
-        return;
-      }
-      yield TranslationFailed(error.toString(), cause: error);
-    }
-  }
+  String get id => 'deepseek';
 }

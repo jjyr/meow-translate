@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../jobs/job_controller.dart';
+import '../l10n/app_localizations.dart';
 import 'drop_page.dart';
 import 'history_page.dart';
 import 'settings_page.dart';
@@ -30,18 +31,18 @@ final class _RootWindowState extends State<RootWindow> {
           currentIndex: _pageIndex,
           scrollController: scrollController,
           onChanged: (value) => setState(() => _pageIndex = value),
-          items: const [
+          items: [
             SidebarItem(
               leading: MacosIcon(CupertinoIcons.book),
-              label: Text('Translate'),
+              label: Text(context.l10n.t('translate')),
             ),
             SidebarItem(
               leading: MacosIcon(CupertinoIcons.list_bullet),
-              label: Text('Jobs'),
+              label: Text(context.l10n.t('jobs')),
             ),
             SidebarItem(
               leading: MacosIcon(CupertinoIcons.gear),
-              label: Text('Settings'),
+              label: Text(context.l10n.t('settings')),
             ),
           ],
         ),

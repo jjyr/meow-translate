@@ -6,12 +6,13 @@ Return only the translated text.
 Do not add commentary, labels, quotes, or Markdown fences.
 ''';
 
-enum TranslationProvider { deepseek, codex }
+enum TranslationProvider { deepseek, openAiCompatible, codexCli }
 
 extension TranslationProviderLabel on TranslationProvider {
   String get label => switch (this) {
     TranslationProvider.deepseek => 'DeepSeek',
-    TranslationProvider.codex => 'Codex',
+    TranslationProvider.openAiCompatible => 'OpenAI Compatible API',
+    TranslationProvider.codexCli => 'Codex CLI',
   };
 }
 
@@ -21,6 +22,7 @@ final class ModelSettings {
     required this.baseUrl,
     required this.model,
     required this.apiKey,
+    required this.executable,
     required this.prompt,
   });
 
@@ -31,13 +33,23 @@ final class ModelSettings {
         baseUrl: 'https://api.deepseek.com/v1',
         model: 'deepseek-chat',
         apiKey: '',
+        executable: '',
         prompt: defaultTranslationPrompt,
       ),
-      TranslationProvider.codex => const ModelSettings(
-        provider: TranslationProvider.codex,
+      TranslationProvider.openAiCompatible => const ModelSettings(
+        provider: TranslationProvider.openAiCompatible,
         baseUrl: 'https://api.openai.com/v1',
-        model: 'codex-mini-latest',
+        model: 'gpt-4.1-mini',
         apiKey: '',
+        executable: '',
+        prompt: defaultTranslationPrompt,
+      ),
+      TranslationProvider.codexCli => const ModelSettings(
+        provider: TranslationProvider.codexCli,
+        baseUrl: '',
+        model: 'gpt-5-codex',
+        apiKey: '',
+        executable: 'codex',
         prompt: defaultTranslationPrompt,
       ),
     };
@@ -52,6 +64,9 @@ final class ModelSettings {
       baseUrl: json['base_url'] as String,
       model: json['model'] as String,
       apiKey: json['api_key'] as String,
+      executable:
+          json['executable'] as String? ??
+          ModelSettings.defaults(provider).executable,
       prompt:
           json['translation_guidance'] as String? ??
           ModelSettings.defaults(provider).prompt,
@@ -62,18 +77,21 @@ final class ModelSettings {
   final String baseUrl;
   final String model;
   final String apiKey;
+  final String executable;
   final String prompt;
 
   ModelSettings copyWith({
     String? baseUrl,
     String? model,
     String? apiKey,
+    String? executable,
     String? prompt,
   }) => ModelSettings(
     provider: provider,
     baseUrl: baseUrl ?? this.baseUrl,
     model: model ?? this.model,
     apiKey: apiKey ?? this.apiKey,
+    executable: executable ?? this.executable,
     prompt: prompt ?? this.prompt,
   );
 
@@ -82,6 +100,7 @@ final class ModelSettings {
     'base_url': baseUrl,
     'model': model,
     'api_key': apiKey,
+    'executable': executable,
     'translation_guidance': prompt,
   };
 }
@@ -165,7 +184,7 @@ final class AppSettings {
       copyWith(models: {...models, modelSettings.provider: modelSettings});
 
   Map<String, Object> toJson() => {
-    'version': 3,
+    'version': 4,
     'output_directory': outputDirectory,
     'output_directory_bookmark': outputDirectoryBookmark,
     'target_language': targetLanguage,
