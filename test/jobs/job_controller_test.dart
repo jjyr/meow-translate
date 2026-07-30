@@ -356,6 +356,93 @@ void main() {
     );
   });
 
+  test('an older Calibre check cannot clear a newer in-flight check', () async {
+    final converter = _ControlledBookConverter();
+    final controller = createController(
+      session: _FakeSession(units: const []),
+      engine: _FakeEngine(),
+      bookConverter: converter,
+    );
+    controller.calibreInstallation = const CalibreInstallation(
+      executable: '/initial/ebook-convert',
+      version: 'initial',
+    );
+
+    final older = controller.refreshCalibre(
+      customExecutable: '/older/ebook-convert',
+    );
+    final newer = controller.refreshCalibre(
+      customExecutable: '/newer/ebook-convert',
+    );
+    converter.complete(
+      '/older/ebook-convert',
+      const CalibreInstallation(
+        executable: '/older/ebook-convert',
+        version: 'older',
+      ),
+    );
+    await older;
+
+    expect(controller.checkingCalibre, isTrue);
+    expect(
+      controller.calibreInstallation?.executable,
+      '/initial/ebook-convert',
+    );
+
+    converter.complete(
+      '/newer/ebook-convert',
+      const CalibreInstallation(
+        executable: '/newer/ebook-convert',
+        version: 'newer',
+      ),
+    );
+    await newer;
+
+    expect(controller.checkingCalibre, isFalse);
+    expect(controller.calibreInstallation?.executable, '/newer/ebook-convert');
+  });
+
+  test(
+    'a slower older Calibre check cannot overwrite the latest result',
+    () async {
+      final converter = _ControlledBookConverter();
+      final controller = createController(
+        session: _FakeSession(units: const []),
+        engine: _FakeEngine(),
+        bookConverter: converter,
+      );
+
+      final older = controller.refreshCalibre(
+        customExecutable: '/older/ebook-convert',
+      );
+      final newer = controller.refreshCalibre(
+        customExecutable: '/newer/ebook-convert',
+      );
+      converter.complete(
+        '/newer/ebook-convert',
+        const CalibreInstallation(
+          executable: '/newer/ebook-convert',
+          version: 'newer',
+        ),
+      );
+      await newer;
+      converter.complete(
+        '/older/ebook-convert',
+        const CalibreInstallation(
+          executable: '/older/ebook-convert',
+          version: 'older',
+        ),
+      );
+      await older;
+
+      expect(controller.checkingCalibre, isFalse);
+      expect(
+        controller.calibreInstallation?.executable,
+        '/newer/ebook-convert',
+      );
+    },
+  );
+
   test('MOBI jobs convert input and preserve source output format', () async {
     final session = _FakeSession(units: [_unit('unit-1')]);
     final converter = _FakeBookConverter();
@@ -975,6 +1062,30 @@ final class _ThrowingJobLogRepository extends JobLogRepository {
   }) async {
     throw const FileSystemException('simulated read-only log directory');
   }
+}
+
+final class _ControlledBookConverter implements BookConverter {
+  final Map<String, Completer<CalibreInstallation?>> _responses = {};
+
+  @override
+  Future<CalibreInstallation?> detect({String customExecutable = ''}) =>
+      _responses
+          .putIfAbsent(
+            customExecutable,
+            () => Completer<CalibreInstallation?>(),
+          )
+          .future;
+
+  void complete(String executable, CalibreInstallation? installation) {
+    _responses[executable]!.complete(installation);
+  }
+
+  @override
+  Future<void> convert({
+    required String executable,
+    required File input,
+    required File output,
+  }) => throw UnsupportedError('Conversion is not used by this test.');
 }
 
 final class _FakeBookConverter implements BookConverter {

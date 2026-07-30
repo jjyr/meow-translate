@@ -58,6 +58,7 @@ final class JobController extends ChangeNotifier {
   final Set<String> _pauseRequested = {};
   final Map<String, TranslationCancellationToken> _cancellationTokens = {};
   final Random _random = Random.secure();
+  var _calibreCheckGeneration = 0;
   static const _maximumConsecutiveTranslationFailures = 2;
 
   AppSettings settings = AppSettings.defaults();
@@ -129,15 +130,21 @@ final class JobController extends ChangeNotifier {
   }
 
   Future<void> refreshCalibre({String? customExecutable}) async {
+    final generation = ++_calibreCheckGeneration;
     checkingCalibre = true;
     notifyListeners();
     try {
-      calibreInstallation = await _bookConverter.detect(
+      final installation = await _bookConverter.detect(
         customExecutable: customExecutable ?? settings.calibreExecutable,
       );
+      if (generation == _calibreCheckGeneration) {
+        calibreInstallation = installation;
+      }
     } finally {
-      checkingCalibre = false;
-      notifyListeners();
+      if (generation == _calibreCheckGeneration) {
+        checkingCalibre = false;
+        notifyListeners();
+      }
     }
   }
 

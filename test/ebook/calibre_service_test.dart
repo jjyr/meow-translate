@@ -37,29 +37,52 @@ cp "\$1" "\$2"
     expect(installation.version, contains('calibre 9.0.0'));
   });
 
-  test('detection timeout terminates and reaps the probe process', () async {
-    final pidFile = File('${temporaryDirectory.path}/probe.pid');
-    await executable.writeAsString('''
+  test(
+    'detection timeout terminates and reaps the probe process tree',
+    () async {
+      final parentPidFile = File('${temporaryDirectory.path}/parent.pid');
+      final childPidFile = File('${temporaryDirectory.path}/child.pid');
+      addTearDown(() async {
+        for (final pidFile in [parentPidFile, childPidFile]) {
+          if (await pidFile.exists()) {
+            final processId = int.tryParse(
+              (await pidFile.readAsString()).trim(),
+            );
+            if (processId != null) {
+              Process.killPid(processId, ProcessSignal.sigkill);
+            }
+          }
+        }
+      });
+      await executable.writeAsString('''
 #!/bin/sh
-echo \$\$ > "${pidFile.path}"
-exec sleep 30
+echo \$\$ > "${parentPidFile.path}"
+/bin/sleep 30 &
+child=\$!
+echo \$child > "${childPidFile.path}"
+wait \$child
 ''');
-    await Process.run('chmod', ['755', executable.path]);
-    final service = CalibreService(
-      detectionTimeout: const Duration(seconds: 2),
-    );
+      await Process.run('chmod', ['755', executable.path]);
+      final service = CalibreService(
+        detectionTimeout: const Duration(seconds: 2),
+      );
 
-    await service.detect(customExecutable: executable.path);
+      await service.detect(customExecutable: executable.path);
 
-    expect(await pidFile.exists(), isTrue);
-    final processId = (await pidFile.readAsString()).trim();
-    final running = await Process.run('kill', ['-0', processId]);
-    expect(
-      running.exitCode,
-      isNot(0),
-      reason: 'The timed-out ebook-convert probe must not remain alive.',
-    );
-  });
+      expect(await parentPidFile.exists(), isTrue);
+      expect(await childPidFile.exists(), isTrue);
+      for (final pidFile in [parentPidFile, childPidFile]) {
+        final processId = (await pidFile.readAsString()).trim();
+        final running = await Process.run('/bin/kill', ['-0', processId]);
+        expect(
+          running.exitCode,
+          isNot(0),
+          reason:
+              'The timed-out ebook-convert process tree must not remain alive.',
+        );
+      }
+    },
+  );
 
   test('converts a book through ebook-convert', () async {
     const service = CalibreService();

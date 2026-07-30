@@ -92,18 +92,86 @@ final class CalibreService implements BookConverter {
   }
 
   Future<void> _terminateAndReap(Process process) async {
-    process.kill();
-    try {
-      await process.exitCode.timeout(_terminationGracePeriod);
+    if (Platform.isWindows) {
+      process.kill();
+      try {
+        await process.exitCode.timeout(_terminationGracePeriod);
+      } on TimeoutException {
+        process.kill();
+      }
       return;
-    } on TimeoutException {
-      process.kill(ProcessSignal.sigkill);
+    }
+
+    final processIds = await _suspendProcessTree(process.pid);
+    for (final processId in processIds.reversed) {
+      Process.killPid(processId, ProcessSignal.sigkill);
     }
     try {
       await process.exitCode.timeout(_terminationGracePeriod);
     } on TimeoutException {
-      // The output subscriptions are still cancelled by the caller so a
-      // misbehaving process cannot continue accumulating output in Meow.
+      process.kill(ProcessSignal.sigkill);
+    }
+    await _waitForProcessIdsToExit(
+      processIds.where((processId) => processId != process.pid),
+    );
+  }
+
+  Future<List<int>> _suspendProcessTree(int rootProcessId) async {
+    final processIds = <int>[];
+    final pending = <int>[rootProcessId];
+    final seen = <int>{};
+    while (pending.isNotEmpty) {
+      final processId = pending.removeLast();
+      if (!seen.add(processId)) {
+        continue;
+      }
+      Process.killPid(processId, ProcessSignal.sigstop);
+      processIds.add(processId);
+      pending.addAll(await _childProcessIds(processId));
+    }
+    return processIds;
+  }
+
+  Future<List<int>> _childProcessIds(int parentProcessId) async {
+    try {
+      final result = await Process.run('/usr/bin/pgrep', [
+        '-P',
+        '$parentProcessId',
+      ]);
+      if (result.exitCode != 0) {
+        return const [];
+      }
+      return '${result.stdout}'
+          .split(RegExp(r'\s+'))
+          .map(int.tryParse)
+          .whereType<int>()
+          .toList();
+    } on Object {
+      return const [];
+    }
+  }
+
+  Future<void> _waitForProcessIdsToExit(Iterable<int> processIds) async {
+    final remaining = processIds.toSet();
+    final deadline = DateTime.now().add(_terminationGracePeriod);
+    while (remaining.isNotEmpty && DateTime.now().isBefore(deadline)) {
+      for (final processId in remaining.toList()) {
+        if (!await _isProcessRunning(processId)) {
+          remaining.remove(processId);
+        }
+      }
+      if (remaining.isNotEmpty) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    }
+  }
+
+  Future<bool> _isProcessRunning(int processId) async {
+    try {
+      final result = await Process.run('/bin/kill', ['-0', '$processId']);
+      return result.exitCode == 0;
+    } on Object {
+      return false;
     }
   }
 
